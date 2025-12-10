@@ -1,0 +1,14 @@
+# --- Web Framework ---
+Flask==3.0.3
+Flask-Cors==4.0.1
+
+# --- Database ---
+pymongo==4.7.2
+
+# --- AI & Browser Agent ---
+browser-use==0.1.27
+langchain-google-genai==2.0.8
+playwright==1.49.1
+
+# --- Utilities ---
+python-dotenv==1.0.1

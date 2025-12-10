@@ -1,0 +1,21 @@
+# Security: NEVER upload secrets
+.env
+
+# Python compilation files
+__pycache__/
+*.pyc
+
+# Virtual Environment (if you created one)
+venv/
+.venv/
+env/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# VS Code settings
+.vscode/
+
+# Browser Use generated files (optional, keeps repo clean)
+agent_history.gif
