@@ -117,7 +117,7 @@ def stop_agent():
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (FIXED) ---
+# --- MAIN AGENT ROUTE (OPTIMIZED FOR MEMORY) ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
     data = request.json
@@ -146,14 +146,27 @@ def run_agent():
         async def get_context():
             global global_browser, global_context, global_vision_state
             
-            # --- UPDATED: SMART HEADLESS MODE ---
-            # Checks if running on Render (server) or local (laptop)
+            # --- UPDATED: SMART HEADLESS MODE & MEMORY OPTIMIZATION ---
             is_production = os.environ.get('RENDER') is not None
             
-            # 1. Start Browser
+            # 1. Start Browser with RAM-saving flags
             if global_browser is None:
                 print(f"🌐 Initializing Browser (Headless: {is_production})...")
-                global_browser = Browser(config=BrowserConfig(headless=is_production))
+                
+                # Critical flags to prevent SIGKILL on Render Free Tier
+                extra_args = [
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--single-process", # Force single process to save RAM
+                ] if is_production else []
+
+                global_browser = Browser(
+                    config=BrowserConfig(
+                        headless=is_production,
+                        extra_chromium_args=extra_args
+                    )
+                )
             
             # 2. Start Context (if None or Vision changed)
             if global_context is None or global_vision_state != use_vision:
@@ -167,8 +180,6 @@ def run_agent():
                     config=BrowserContextConfig(highlight_elements=use_vision)
                 )
             
-            # NOTE: We DO NOT call .new_page() here because it crashes. 
-            # We let the Agent handle page creation.
             return global_context
 
         try:
