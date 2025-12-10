@@ -146,10 +146,14 @@ def run_agent():
         async def get_context():
             global global_browser, global_context, global_vision_state
             
+            # --- UPDATED: SMART HEADLESS MODE ---
+            # Checks if running on Render (server) or local (laptop)
+            is_production = os.environ.get('RENDER') is not None
+            
             # 1. Start Browser
             if global_browser is None:
-                print("🌐 Initializing Browser...")
-                global_browser = Browser(config=BrowserConfig(headless=False))
+                print(f"🌐 Initializing Browser (Headless: {is_production})...")
+                global_browser = Browser(config=BrowserConfig(headless=is_production))
             
             # 2. Start Context (if None or Vision changed)
             if global_context is None or global_vision_state != use_vision:
@@ -260,4 +264,7 @@ def run_agent():
         return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000, threaded=False, use_reloader=False)
+    # --- UPDATED: DYNAMIC PORT FOR RENDER ---
+    port = int(os.environ.get("PORT", 5000))
+    # host='0.0.0.0' is required for the server to be accessible
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=False, use_reloader=False)
