@@ -117,12 +117,11 @@ def stop_agent():
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (OPTIMIZED FOR RENDER) ---
+# --- MAIN AGENT ROUTE (OPTIMIZED FOR STABILITY) ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
     # ---------------------------------------------------------
     # ⚡ LAZY IMPORTS: Fixes "Port scan timeout" on Render
-    # We import heavy libraries ONLY when the button is clicked.
     # ---------------------------------------------------------
     from langchain_google_genai import ChatGoogleGenerativeAI
     from browser_use import Agent, Browser, BrowserConfig
@@ -157,9 +156,19 @@ def run_agent():
         async def get_context():
             global global_browser, global_context, global_vision_state
             
-            # Check environment
             is_production = os.environ.get('RENDER') is not None
             
+            # 0. Health Check: If browser exists, is it alive?
+            if global_browser:
+                try:
+                    # Try to see if connection is active
+                    if not global_browser.playwright:
+                        raise Exception("Browser disconnected")
+                except:
+                    print("💀 Found dead browser state. Resetting global_browser...")
+                    global_browser = None
+                    global_context = None
+
             # 1. Start Browser (Hybrid Logic)
             if global_browser is None:
                 # --- STRATEGY 1: REMOTE BROWSER (If Key Exists) ---
@@ -174,8 +183,6 @@ def run_agent():
                 # --- STRATEGY 2: LOCAL BROWSER (Fallback) ---
                 else:
                     print(f"🌐 Initializing Local Browser (Headless: {is_production})...")
-                    
-                    # Memory protection flags just in case we are on Render without a key
                     extra_args = [
                         "--disable-gpu",
                         "--disable-dev-shm-usage",
@@ -223,9 +230,16 @@ def run_agent():
                 error_str = str(e)
                 # If error suggests the tab/window is closed/dead...
                 if "Target closed" in error_str or "no valid pages" in error_str or "closed" in error_str:
-                    print("⚠️ Context appears dead. Retrying with fresh context...")
+                    print("⚠️ Browser crashed. Performing HARD RESET...")
+                    
+                    # --- CRITICAL FIX: Kill the browser instance ---
                     global_context = None 
-                    ctx = await get_context() # Reset
+                    global_browser = None 
+                    
+                    # Re-initialize everything fresh
+                    ctx = await get_context() 
+                    
+                    print("♻️ Retrying task with fresh browser...")
                     agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
                     history_result = await agent.run()
                 else:
