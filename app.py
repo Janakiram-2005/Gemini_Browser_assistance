@@ -1,14 +1,11 @@
 import os
-import asyncio
 import threading
 import json
+import asyncio
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from browser_use import Agent, Browser, BrowserConfig
-from browser_use.browser.context import BrowserContextConfig
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
@@ -28,13 +25,13 @@ ACTIVE_BROWSERLESS_KEY = os.getenv("BROWSERLESS_API_KEY")
 history_col = None
 try:
     if ACTIVE_MONGO_URI:
-        # UPDATE THIS LINE IN app.py
+        # connect=False is CRITICAL for Gunicorn/Render deployment to prevent connection hangs
         mongo_client = MongoClient(ACTIVE_MONGO_URI, connect=False)
         db = mongo_client["gemini_agent_db"]
         history_col = db["history"]
-        print(f"✅ Connected to MongoDB")
+        print(f"✅ Database Configured (Lazy Connection)")
 except Exception as e:
-    print(f"❌ MongoDB Failed: {e}")
+    print(f"❌ MongoDB Configuration Error: {e}")
 
 # --- GLOBAL VARIABLES ---
 global_browser = None
@@ -120,9 +117,17 @@ def stop_agent():
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (HYBRID: LOCAL + REMOTE) ---
+# --- MAIN AGENT ROUTE (OPTIMIZED FOR RENDER) ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
+    # ---------------------------------------------------------
+    # ⚡ LAZY IMPORTS: Fixes "Port scan timeout" on Render
+    # We import heavy libraries ONLY when the button is clicked.
+    # ---------------------------------------------------------
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from browser_use import Agent, Browser, BrowserConfig
+    from browser_use.browser.context import BrowserContextConfig
+
     data = request.json
     user_command = data.get('command')
     use_vision = data.get('use_vision', False)
@@ -134,13 +139,16 @@ def run_agent():
 
     log_id = None
     if history_col is not None:
-        log_id = history_col.insert_one({
-            "command": user_command,
-            "status": "Running",
-            "result": "Processing...",
-            "actions": [],
-            "timestamp": datetime.now()
-        }).inserted_id
+        try:
+            log_id = history_col.insert_one({
+                "command": user_command,
+                "status": "Running",
+                "result": "Processing...",
+                "actions": [],
+                "timestamp": datetime.now()
+            }).inserted_id
+        except Exception as e:
+            print(f"⚠️ DB Insert Warning: {e}")
 
     async def worker():
         global global_browser, global_context, current_async_task, global_vision_state
