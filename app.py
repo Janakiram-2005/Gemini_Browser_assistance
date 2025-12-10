@@ -18,25 +18,22 @@ CORS(app)
 # --- GLOBAL KEY MANAGEMENT ---
 ACTIVE_API_KEY = os.getenv("GOOGLE_API_KEY")
 ACTIVE_MONGO_URI = os.getenv("MONGODB_URI")
-# Load Browserless Key (Add this to your .env or Render Environment Variables)
 ACTIVE_BROWSERLESS_KEY = os.getenv("BROWSERLESS_API_KEY")
 
 # --- DATABASE SETUP ---
 history_col = None
 try:
     if ACTIVE_MONGO_URI:
-        # connect=False is CRITICAL for Gunicorn/Render deployment to prevent connection hangs
         mongo_client = MongoClient(ACTIVE_MONGO_URI, connect=False)
         db = mongo_client["gemini_agent_db"]
         history_col = db["history"]
-        print(f"✅ Database Configured (Lazy Connection)")
+        print(f"✅ Database Configured")
 except Exception as e:
     print(f"❌ MongoDB Configuration Error: {e}")
 
 # --- GLOBAL VARIABLES ---
 global_browser = None
-global_context = None 
-global_vision_state = False 
+global_context = None # We keep this now to reuse the open tab
 current_async_task = None
 agent_loop = asyncio.new_event_loop()
 
@@ -117,12 +114,9 @@ def stop_agent():
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (OPTIMIZED FOR STABILITY) ---
+# --- MAIN AGENT ROUTE (KEEP TAB OPEN) ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
-    # ---------------------------------------------------------
-    # ⚡ LAZY IMPORTS: Fixes "Port scan timeout" on Render
-    # ---------------------------------------------------------
     from langchain_google_genai import ChatGoogleGenerativeAI
     from browser_use import Agent, Browser, BrowserConfig
     from browser_use.browser.context import BrowserContextConfig
@@ -150,71 +144,65 @@ def run_agent():
             print(f"⚠️ DB Insert Warning: {e}")
 
     async def worker():
-        global global_browser, global_context, current_async_task, global_vision_state
+        global global_browser, global_context, current_async_task
         current_async_task = asyncio.current_task()
         
-        async def get_context():
-            global global_browser, global_context, global_vision_state
-            
+        async def get_browser_and_context():
+            global global_browser, global_context
             is_production = os.environ.get('RENDER') is not None
-            
-            # 0. Health Check: If browser exists, is it alive?
+
+            # 1. Health Check: Is the browser alive?
             if global_browser:
                 try:
-                    # Try to see if connection is active
-                    if not global_browser.playwright:
-                        raise Exception("Browser disconnected")
+                    if not global_browser.browser.is_connected():
+                        print("💔 Dead browser detected. Resetting...")
+                        global_browser = None
+                        global_context = None
                 except:
-                    print("💀 Found dead browser state. Resetting global_browser...")
                     global_browser = None
                     global_context = None
 
-            # 1. Start Browser (Hybrid Logic)
+            # 2. Initialize Browser (If needed)
             if global_browser is None:
-                # --- STRATEGY 1: REMOTE BROWSER (If Key Exists) ---
                 if is_production and ACTIVE_BROWSERLESS_KEY:
-                    print(f"🌐 Connecting to Remote Browser (Browserless)...")
+                    print(f"🌐 Connecting to Browserless...")
                     global_browser = Browser(
                         config=BrowserConfig(
                             cdp_url=f"wss://chrome.browserless.io?token={ACTIVE_BROWSERLESS_KEY}"
                         )
                     )
-                
-                # --- STRATEGY 2: LOCAL BROWSER (Fallback) ---
                 else:
-                    print(f"🌐 Initializing Local Browser (Headless: {is_production})...")
-                    extra_args = [
-                        "--disable-gpu",
-                        "--disable-dev-shm-usage",
-                        "--no-sandbox",
-                        "--single-process", 
-                    ] if is_production else []
-
+                    print(f"🌐 Launching Local Browser...")
+                    extra_args = ["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox", "--single-process"] if is_production else []
                     global_browser = Browser(
                         config=BrowserConfig(
-                            headless=is_production,
+                            headless=is_production, # Change to False if you want to see it pop up on laptop
                             extra_chromium_args=extra_args
                         )
                     )
-            
-            # 2. Start Context (if None or Vision changed)
-            if global_context is None or global_vision_state != use_vision:
-                print("🪟 Initializing Context...")
-                if global_context: 
-                    try: await global_context.close()
-                    except: pass
-                
-                global_vision_state = use_vision
+
+            # 3. Reuse or Create Context (Tab)
+            # If we already have a tab open, reuse it!
+            if global_context:
+                try:
+                    # Test if context is valid (hacky check)
+                    # We assume it is valid if we have it, but if agent fails we reset
+                    pass 
+                except:
+                     global_context = None
+
+            if global_context is None:
+                print("✨ Creating fresh context (New Tab)...")
                 global_context = await global_browser.new_context(
                     config=BrowserContextConfig(highlight_elements=use_vision)
                 )
-            
+
             return global_context
 
         try:
-            # 1. Get Context
-            ctx = await get_context()
-            
+            # 1. Get Context (Reuse existing if possible)
+            ctx = await get_browser_and_context()
+
             dynamic_llm = ChatGoogleGenerativeAI(
                 model="gemini-2.0-flash", 
                 temperature=0,
@@ -222,30 +210,20 @@ def run_agent():
             )
 
             # 2. Run Agent
-            try:
-                agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
-                history_result = await agent.run()
+            agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
             
+            try:
+                history_result = await agent.run()
             except Exception as e:
-                error_str = str(e)
-                # If error suggests the tab/window is closed/dead...
-                if "Target closed" in error_str or "no valid pages" in error_str or "closed" in error_str:
-                    print("⚠️ Browser crashed. Performing HARD RESET...")
-                    
-                    # --- CRITICAL FIX: Kill the browser instance ---
-                    global_context = None 
-                    global_browser = None 
-                    
-                    # Re-initialize everything fresh
-                    ctx = await get_context() 
-                    
-                    print("♻️ Retrying task with fresh browser...")
-                    agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
-                    history_result = await agent.run()
-                else:
-                    raise e 
+                # If agent crashes, it usually means the Tab is dead/stuck.
+                print(f"⚠️ Agent Error: {e}. Resetting context for next run...")
+                global_context = None # Force new tab next time
+                raise e
 
-            # 3. Process Results
+            # 3. SUCCESS! We do NOT close the context here.
+            print("✅ Task Done. Keeping tab open.")
+
+            # Process Results
             actions_log = []
             final_result = str(history_result.final_result()) if history_result.final_result() else "Task Completed."
             
@@ -270,26 +248,25 @@ def run_agent():
 
         except asyncio.CancelledError:
             if log_id and history_col is not None:
-                history_col.update_one({"_id": log_id}, {"$set": {
-                    "status": "Stopped", "result": "Manually stopped.",
-                }})
+                history_col.update_one({"_id": log_id}, {"$set": {"status": "Stopped", "result": "Manually stopped."}})
             return {"result": "Stopped", "actions": []}
         
         except Exception as e:
             error_msg = str(e)
             print(f"❌ Error: {error_msg}")
             
+            # If error, force reset for next time
+            global_browser = None
+            global_context = None
+            
             status_code = "Failed"
-            user_msg = "Error occurred."
-            if "429" in error_msg or "Resource has been exhausted" in error_msg:
-                status_code = "QuotaExceeded"
-                user_msg = "⚠️ API Quota Exceeded."
+            if "429" in error_msg: status_code = "QuotaExceeded"
             
             if log_id and history_col is not None:
                 history_col.update_one({"_id": log_id}, {"$set": {
-                    "status": status_code, "result": user_msg, "error_details": error_msg
+                    "status": status_code, "result": "Error occurred.", "error_details": error_msg
                 }})
-            return {"result": user_msg, "actions": [], "status": status_code}
+            return {"result": "Error occurred.", "actions": [], "status": status_code}
 
     try:
         future = asyncio.run_coroutine_threadsafe(worker(), agent_loop)
