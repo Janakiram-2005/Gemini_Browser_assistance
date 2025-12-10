@@ -33,7 +33,7 @@ except Exception as e:
 
 # --- GLOBAL VARIABLES ---
 global_browser = None
-global_context = None # We keep this now to reuse the open tab
+global_context = None 
 current_async_task = None
 agent_loop = asyncio.new_event_loop()
 
@@ -101,34 +101,59 @@ def clear_history():
     history_col.delete_many({})
     return jsonify({"status": "success"})
 
+# --- IMPROVED STOP FUNCTION ---
 @app.route('/stop', methods=['POST'])
 def stop_agent():
-    def cancel_task():
-        global current_async_task
+    async def force_stop():
+        global current_async_task, global_context
+        
+        # 1. Cancel the Python Task
         if current_async_task and not current_async_task.done():
             current_async_task.cancel()
-            return True
-        return False
+            print("🛑 Task Cancelled Signal Sent")
+
+        # 2. FORCE KILL THE BROWSER TAB (Context)
+        # This stops the AI immediately because it loses control of the page
+        if global_context:
+            try:
+                await global_context.close()
+                print("🛑 Browser Tab Closed Forcefully")
+                global_context = None
+            except:
+                pass
+    
     if agent_loop.is_running():
-        agent_loop.call_soon_threadsafe(cancel_task)
+        future = asyncio.run_coroutine_threadsafe(force_stop(), agent_loop)
+        try:
+            future.result(timeout=5)
+        except:
+            pass
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (KEEP TAB OPEN) ---
+# --- MAIN AGENT ROUTE (MULTILINGUAL) ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
     from langchain_google_genai import ChatGoogleGenerativeAI
     from browser_use import Agent, Browser, BrowserConfig
     from browser_use.browser.context import BrowserContextConfig
+    from langchain_core.prompts import ChatPromptTemplate
 
     data = request.json
     user_command = data.get('command')
     use_vision = data.get('use_vision', False)
+    # Get the language selected by the user (default to English)
+    target_language = data.get('language', 'English')
 
     if not user_command: return jsonify({"status": "error", "message": "No command"}), 400
     if not ACTIVE_API_KEY: return jsonify({"status": "error", "message": "Server has no API Key!"}), 400
 
-    print(f"🚀 Task: {user_command} | Vision Mode: {use_vision}")
+    print(f"🚀 Task: {user_command} | Lang: {target_language} | Vision: {use_vision}")
+
+    # --- MULTILINGUAL PROMPT ENGINEERING ---
+    # We append this instruction so Gemini knows to reply in the correct language
+    if target_language and target_language.lower() != 'english':
+        user_command += f" (IMPORTANT: Perform the task, but reply to me in {target_language} language only.)"
 
     log_id = None
     if history_col is not None:
@@ -151,7 +176,7 @@ def run_agent():
             global global_browser, global_context
             is_production = os.environ.get('RENDER') is not None
 
-            # 1. Health Check: Is the browser alive?
+            # 1. Health Check
             if global_browser:
                 try:
                     if not global_browser.browser.is_connected():
@@ -162,7 +187,7 @@ def run_agent():
                     global_browser = None
                     global_context = None
 
-            # 2. Initialize Browser (If needed)
+            # 2. Initialize Browser
             if global_browser is None:
                 if is_production and ACTIVE_BROWSERLESS_KEY:
                     print(f"🌐 Connecting to Browserless...")
@@ -176,23 +201,14 @@ def run_agent():
                     extra_args = ["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox", "--single-process"] if is_production else []
                     global_browser = Browser(
                         config=BrowserConfig(
-                            headless=is_production, # Change to False if you want to see it pop up on laptop
+                            headless=is_production, 
                             extra_chromium_args=extra_args
                         )
                     )
 
-            # 3. Reuse or Create Context (Tab)
-            # If we already have a tab open, reuse it!
-            if global_context:
-                try:
-                    # Test if context is valid (hacky check)
-                    # We assume it is valid if we have it, but if agent fails we reset
-                    pass 
-                except:
-                     global_context = None
-
+            # 3. Reuse or Create Context
             if global_context is None:
-                print("✨ Creating fresh context (New Tab)...")
+                print("✨ Creating fresh context...")
                 global_context = await global_browser.new_context(
                     config=BrowserContextConfig(highlight_elements=use_vision)
                 )
@@ -200,7 +216,6 @@ def run_agent():
             return global_context
 
         try:
-            # 1. Get Context (Reuse existing if possible)
             ctx = await get_browser_and_context()
 
             dynamic_llm = ChatGoogleGenerativeAI(
@@ -209,19 +224,14 @@ def run_agent():
                 google_api_key=ACTIVE_API_KEY 
             )
 
-            # 2. Run Agent
             agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
             
             try:
                 history_result = await agent.run()
             except Exception as e:
-                # If agent crashes, it usually means the Tab is dead/stuck.
-                print(f"⚠️ Agent Error: {e}. Resetting context for next run...")
-                global_context = None # Force new tab next time
+                print(f"⚠️ Agent Error: {e}. Resetting context...")
+                global_context = None 
                 raise e
-
-            # 3. SUCCESS! We do NOT close the context here.
-            print("✅ Task Done. Keeping tab open.")
 
             # Process Results
             actions_log = []
@@ -255,7 +265,6 @@ def run_agent():
             error_msg = str(e)
             print(f"❌ Error: {error_msg}")
             
-            # If error, force reset for next time
             global_browser = None
             global_context = None
             
