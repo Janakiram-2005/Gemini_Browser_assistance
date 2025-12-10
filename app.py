@@ -28,7 +28,8 @@ ACTIVE_BROWSERLESS_KEY = os.getenv("BROWSERLESS_API_KEY")
 history_col = None
 try:
     if ACTIVE_MONGO_URI:
-        mongo_client = MongoClient(ACTIVE_MONGO_URI)
+        # UPDATE THIS LINE IN app.py
+        mongo_client = MongoClient(ACTIVE_MONGO_URI, connect=False)
         db = mongo_client["gemini_agent_db"]
         history_col = db["history"]
         print(f"✅ Connected to MongoDB")
