@@ -2,7 +2,8 @@ import os
 import threading
 import json
 import asyncio
-from datetime import datetime, timedelta
+import base64
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -24,6 +25,7 @@ ACTIVE_BROWSERLESS_KEY = os.getenv("BROWSERLESS_API_KEY")
 history_col = None
 try:
     if ACTIVE_MONGO_URI:
+        # connect=False is critical for Gunicorn workers to avoid deadlocks
         mongo_client = MongoClient(ACTIVE_MONGO_URI, connect=False)
         db = mongo_client["gemini_agent_db"]
         history_col = db["history"]
@@ -72,7 +74,6 @@ def get_history():
                 "command": doc.get("command"),
                 "status": doc.get("status", "Unknown"),
                 "result": doc.get("result", ""),
-                "actions": doc.get("actions", []),
                 "time": doc.get("timestamp").strftime("%H:%M:%S")
             })
         return jsonify(logs)
@@ -92,66 +93,58 @@ def get_usage():
 @app.route('/history/<item_id>', methods=['DELETE'])
 def delete_history_item(item_id):
     if history_col is None: return jsonify({"status": "error"})
-    history_col.delete_one({'_id': ObjectId(item_id)})
-    return jsonify({"status": "success"})
+    try:
+        history_col.delete_one({'_id': ObjectId(item_id)})
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/history', methods=['DELETE'])
 def clear_history():
     if history_col is None: return jsonify({"status": "error"})
-    history_col.delete_many({})
-    return jsonify({"status": "success"})
+    try:
+        history_col.delete_many({})
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
-# --- IMPROVED STOP FUNCTION ---
 @app.route('/stop', methods=['POST'])
 def stop_agent():
     async def force_stop():
         global current_async_task, global_context
-        
-        # 1. Cancel the Python Task
+        # 1. Cancel Python Task
         if current_async_task and not current_async_task.done():
             current_async_task.cancel()
-            print("🛑 Task Cancelled Signal Sent")
-
-        # 2. FORCE KILL THE BROWSER TAB (Context)
-        # This stops the AI immediately because it loses control of the page
+        # 2. Kill Context (Tab)
         if global_context:
-            try:
-                await global_context.close()
-                print("🛑 Browser Tab Closed Forcefully")
-                global_context = None
-            except:
-                pass
+            try: await global_context.close()
+            except: pass
+            global_context = None 
     
     if agent_loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(force_stop(), agent_loop)
-        try:
-            future.result(timeout=5)
-        except:
-            pass
+        agent_loop.call_soon_threadsafe(lambda: asyncio.create_task(force_stop()))
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (MULTILINGUAL) ---
+# --- MAIN AGENT ROUTE ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
     from langchain_google_genai import ChatGoogleGenerativeAI
     from browser_use import Agent, Browser, BrowserConfig
     from browser_use.browser.context import BrowserContextConfig
-    from langchain_core.prompts import ChatPromptTemplate
 
     data = request.json
     user_command = data.get('command')
     use_vision = data.get('use_vision', False)
-    # Get the language selected by the user (default to English)
     target_language = data.get('language', 'English')
+    selected_model = data.get('model', 'gemini-2.0-flash') # Default to Flash
 
     if not user_command: return jsonify({"status": "error", "message": "No command"}), 400
     if not ACTIVE_API_KEY: return jsonify({"status": "error", "message": "Server has no API Key!"}), 400
 
-    print(f"🚀 Task: {user_command} | Lang: {target_language} | Vision: {use_vision}")
+    print(f"🚀 Task: {user_command} | Model: {selected_model} | Lang: {target_language}")
 
-    # --- MULTILINGUAL PROMPT ENGINEERING ---
-    # We append this instruction so Gemini knows to reply in the correct language
+    # Prompt Engineering for Language
     if target_language and target_language.lower() != 'english':
         user_command += f" (IMPORTANT: Perform the task, but reply to me in {target_language} language only.)"
 
@@ -162,11 +155,9 @@ def run_agent():
                 "command": user_command,
                 "status": "Running",
                 "result": "Processing...",
-                "actions": [],
                 "timestamp": datetime.now()
             }).inserted_id
-        except Exception as e:
-            print(f"⚠️ DB Insert Warning: {e}")
+        except: pass
 
     async def worker():
         global global_browser, global_context, current_async_task
@@ -176,50 +167,43 @@ def run_agent():
             global global_browser, global_context
             is_production = os.environ.get('RENDER') is not None
 
-            # 1. Health Check
+            # 1. Check Browser Health
             if global_browser:
                 try:
                     if not global_browser.browser.is_connected():
-                        print("💔 Dead browser detected. Resetting...")
                         global_browser = None
                         global_context = None
                 except:
                     global_browser = None
                     global_context = None
 
-            # 2. Initialize Browser
+            # 2. Init Browser
             if global_browser is None:
                 if is_production and ACTIVE_BROWSERLESS_KEY:
-                    print(f"🌐 Connecting to Browserless...")
-                    global_browser = Browser(
-                        config=BrowserConfig(
-                            cdp_url=f"wss://chrome.browserless.io?token={ACTIVE_BROWSERLESS_KEY}"
-                        )
-                    )
+                    global_browser = Browser(config=BrowserConfig(cdp_url=f"wss://chrome.browserless.io?token={ACTIVE_BROWSERLESS_KEY}"))
                 else:
-                    print(f"🌐 Launching Local Browser...")
                     extra_args = ["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox", "--single-process"] if is_production else []
-                    global_browser = Browser(
-                        config=BrowserConfig(
-                            headless=is_production, 
-                            extra_chromium_args=extra_args
-                        )
-                    )
+                    global_browser = Browser(config=BrowserConfig(headless=is_production, extra_chromium_args=extra_args))
 
             # 3. Reuse or Create Context
+            if global_context:
+                try: 
+                    # Quick check if context is still valid
+                    await global_context.pages() 
+                except: 
+                    global_context = None
+
             if global_context is None:
-                print("✨ Creating fresh context...")
-                global_context = await global_browser.new_context(
-                    config=BrowserContextConfig(highlight_elements=use_vision)
-                )
+                global_context = await global_browser.new_context(config=BrowserContextConfig(highlight_elements=use_vision))
 
             return global_context
 
         try:
             ctx = await get_browser_and_context()
 
+            # Pass the selected model here
             dynamic_llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash", 
+                model=selected_model, 
                 temperature=0,
                 google_api_key=ACTIVE_API_KEY 
             )
@@ -233,62 +217,43 @@ def run_agent():
                 global_context = None 
                 raise e
 
-            # Process Results
-            actions_log = []
-            final_result = str(history_result.final_result()) if history_result.final_result() else "Task Completed."
-            
+            # 📸 CAPTURE SCREENSHOT (Visual Feedback)
+            screenshot_b64 = None
             try:
-                for step in history_result.history:
-                    if hasattr(step, 'tool_calls'):
-                        for tool in step.tool_calls:
-                            name = tool.function.name
-                            if 'go_to' in name: text = "Opened website"
-                            elif 'click' in name: text = "Clicked element"
-                            elif 'input' in name: text = "Typed text"
-                            else: text = "Performed action"
-                            actions_log.append({"thought": text, "action": name})
+                page = await ctx.pages()[0] # Get active page
+                screenshot_bytes = await page.screenshot()
+                screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
             except: pass
 
-            if log_id and history_col is not None:
-                history_col.update_one({"_id": log_id}, {"$set": {
-                    "status": "Success", "result": final_result, "actions": actions_log
-                }})
+            final_result = str(history_result.final_result()) if history_result.final_result() else "Task Completed."
             
-            return {"result": final_result, "actions": actions_log}
+            # Save to DB
+            if log_id and history_col is not None:
+                history_col.update_one({"_id": log_id}, {"$set": {"status": "Success", "result": final_result}})
+            
+            return {
+                "status": "success", 
+                "message": final_result, 
+                "screenshot": screenshot_b64 
+            }
 
         except asyncio.CancelledError:
             if log_id and history_col is not None:
                 history_col.update_one({"_id": log_id}, {"$set": {"status": "Stopped", "result": "Manually stopped."}})
-            return {"result": "Stopped", "actions": []}
+            return {"status": "error", "message": "Stopped by user"}
         
         except Exception as e:
-            error_msg = str(e)
-            print(f"❌ Error: {error_msg}")
-            
             global_browser = None
             global_context = None
-            
-            status_code = "Failed"
-            if "429" in error_msg: status_code = "QuotaExceeded"
-            
+            error_msg = str(e)
             if log_id and history_col is not None:
-                history_col.update_one({"_id": log_id}, {"$set": {
-                    "status": status_code, "result": "Error occurred.", "error_details": error_msg
-                }})
-            return {"result": "Error occurred.", "actions": [], "status": status_code}
+                history_col.update_one({"_id": log_id}, {"$set": {"status": "Failed", "result": "Error", "error_details": error_msg}})
+            return {"status": "error", "message": str(e)}
 
     try:
         future = asyncio.run_coroutine_threadsafe(worker(), agent_loop)
         result_data = future.result()
-        
-        if result_data.get("status") == "QuotaExceeded":
-             return jsonify({"status": "maintenance", "message": result_data.get("result")})
-
-        return jsonify({
-            "status": "success", 
-            "message": result_data.get("result", ""),
-            "actions": result_data.get("actions", [])
-        })
+        return jsonify(result_data)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
