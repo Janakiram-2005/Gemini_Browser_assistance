@@ -21,6 +21,8 @@ CORS(app)
 # --- GLOBAL KEY MANAGEMENT ---
 ACTIVE_API_KEY = os.getenv("GOOGLE_API_KEY")
 ACTIVE_MONGO_URI = os.getenv("MONGODB_URI")
+# Load Browserless Key (Add this to your .env or Render Environment Variables)
+ACTIVE_BROWSERLESS_KEY = os.getenv("BROWSERLESS_API_KEY")
 
 # --- DATABASE SETUP ---
 history_col = None
@@ -117,7 +119,7 @@ def stop_agent():
         return jsonify({"status": "stopped"})
     return jsonify({"status": "error"})
 
-# --- MAIN AGENT ROUTE (OPTIMIZED FOR MEMORY) ---
+# --- MAIN AGENT ROUTE (HYBRID: LOCAL + REMOTE) ---
 @app.route('/run_agent', methods=['POST'])
 def run_agent():
     data = request.json
@@ -146,27 +148,38 @@ def run_agent():
         async def get_context():
             global global_browser, global_context, global_vision_state
             
-            # --- UPDATED: SMART HEADLESS MODE & MEMORY OPTIMIZATION ---
+            # Check environment
             is_production = os.environ.get('RENDER') is not None
             
-            # 1. Start Browser with RAM-saving flags
+            # 1. Start Browser (Hybrid Logic)
             if global_browser is None:
-                print(f"🌐 Initializing Browser (Headless: {is_production})...")
-                
-                # Critical flags to prevent SIGKILL on Render Free Tier
-                extra_args = [
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                    "--single-process", # Force single process to save RAM
-                ] if is_production else []
-
-                global_browser = Browser(
-                    config=BrowserConfig(
-                        headless=is_production,
-                        extra_chromium_args=extra_args
+                # --- STRATEGY 1: REMOTE BROWSER (If Key Exists) ---
+                if is_production and ACTIVE_BROWSERLESS_KEY:
+                    print(f"🌐 Connecting to Remote Browser (Browserless)...")
+                    global_browser = Browser(
+                        config=BrowserConfig(
+                            cdp_url=f"wss://chrome.browserless.io?token={ACTIVE_BROWSERLESS_KEY}"
+                        )
                     )
-                )
+                
+                # --- STRATEGY 2: LOCAL BROWSER (Fallback) ---
+                else:
+                    print(f"🌐 Initializing Local Browser (Headless: {is_production})...")
+                    
+                    # Memory protection flags just in case we are on Render without a key
+                    extra_args = [
+                        "--disable-gpu",
+                        "--disable-dev-shm-usage",
+                        "--no-sandbox",
+                        "--single-process", 
+                    ] if is_production else []
+
+                    global_browser = Browser(
+                        config=BrowserConfig(
+                            headless=is_production,
+                            extra_chromium_args=extra_args
+                        )
+                    )
             
             # 2. Start Context (if None or Vision changed)
             if global_context is None or global_vision_state != use_vision:
@@ -192,7 +205,7 @@ def run_agent():
                 google_api_key=ACTIVE_API_KEY 
             )
 
-            # 2. Run Agent (With Retry for "Closed Tab" error)
+            # 2. Run Agent
             try:
                 agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
                 history_result = await agent.run()
@@ -201,17 +214,13 @@ def run_agent():
                 error_str = str(e)
                 # If error suggests the tab/window is closed/dead...
                 if "Target closed" in error_str or "no valid pages" in error_str or "closed" in error_str:
-                    print("⚠️ Context appears dead (Tab closed?). Retrying with fresh context...")
-                    
-                    # Force Reset
+                    print("⚠️ Context appears dead. Retrying with fresh context...")
                     global_context = None 
-                    ctx = await get_context() # Get fresh context
-                    
-                    # Retry
+                    ctx = await get_context() # Reset
                     agent = Agent(task=user_command, llm=dynamic_llm, browser_context=ctx)
                     history_result = await agent.run()
                 else:
-                    raise e # Real error
+                    raise e 
 
             # 3. Process Results
             actions_log = []
@@ -275,7 +284,5 @@ def run_agent():
         return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
-    # --- UPDATED: DYNAMIC PORT FOR RENDER ---
     port = int(os.environ.get("PORT", 5000))
-    # host='0.0.0.0' is required for the server to be accessible
     app.run(host='0.0.0.0', port=port, debug=False, threaded=False, use_reloader=False)
