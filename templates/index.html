@@ -1,374 +1,422 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
     <title>Gemini Agent Pro</title>
-    
+
     <link rel="icon" href="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" type="image/svg+xml">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    
+
     <style>
-        /* --- CORE VARIABLES --- */
-        :root {
-            --primary: #8b5cf6; 
-            --primary-glow: rgba(139, 92, 246, 0.5);
+        /* ---------- CORE VARIABLES ---------- */
+        :root{
+            --primary: #8b5cf6;
+            --primary-glow: rgba(139,92,246,0.45);
             --secondary: #06b6d4;
-            --danger: #ef4444; 
-            --success: #10b981; 
+            --danger: #ef4444;
+            --success: #10b981;
             --text-main: #f8fafc;
             --text-sub: #94a3b8;
-            --glass-bg: rgba(15, 23, 42, 0.6);
-            --glass-border: rgba(255, 255, 255, 0.1);
-            --card-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            --input-bg: rgba(30, 41, 59, 0.6);
-            --modal-bg: rgba(15, 23, 42, 0.95);
-            --drawer-bg: rgba(15, 23, 42, 0.95);
+            --glass-bg: rgba(15,23,42,0.62);
+            --glass-border: rgba(255,255,255,0.12);
+            --card-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+            --input-bg: rgba(30,41,59,0.6);
+            --modal-bg: rgba(15,23,42,0.96);
+            --drawer-bg: rgba(15,23,42,0.95);
+            --max-ui-width: 900px;
         }
 
-        /* --- LIGHT MODE VARIABLES --- */
-        body.light-mode {
+        /* ---------- LIGHT MODE OVERRIDES ---------- */
+        body.light-mode{
             --text-main: #1e293b;
             --text-sub: #64748b;
-            --glass-bg: rgba(255, 255, 255, 0.65); 
-            --glass-border: rgba(255, 255, 255, 0.9);
-            --card-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
-            --input-bg: rgba(255, 255, 255, 0.8);
-            --modal-bg: rgba(255, 255, 255, 0.95);
-            --drawer-bg: rgba(255, 255, 255, 0.95);
+            --glass-bg: rgba(255,255,255,0.92);
+            --glass-border: rgba(0,0,0,0.06);
+            --card-shadow: 0 16px 40px rgba(13, 20, 30, 0.06);
+            --input-bg: rgba(255,255,255,0.9);
+            --modal-bg: rgba(255,255,255,0.98);
+            --drawer-bg: rgba(255,255,255,0.98);
             --primary: #4f46e5;
         }
 
-        body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            margin: 0; height: 100vh; overflow: hidden;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            color: var(--text-main);
-            position: relative;
-            background: #020617; /* Fallback */
-            transition: color 0.5s ease;
+        /* ---------- BASE LAYOUT ---------- */
+        html,body{
+            height:100%;
+            margin:0;
+            font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial;
+            -webkit-font-smoothing:antialiased;
+            -moz-osx-font-smoothing:grayscale;
+            color:var(--text-main);
+            background:#020617;
+            overflow: hidden; /* we'll control scrolling inside card on small screens */
         }
 
-        /* --- DYNAMIC BACKGROUNDS --- */
-        
-        /* DARK MODE: Rotating "Torch/Aurora" Effect */
-        body::before {
-            content: ''; position: absolute; width: 150%; height: 150%;
-            background: conic-gradient(
-                from 0deg at 50% 50%,
-                #020617 0deg,
-                #1e1b4b 60deg,
-                #312e81 120deg,
-                #0f172a 180deg,
-                #4c1d95 240deg,
-                #1e1b4b 300deg,
-                #020617 360deg
-            );
-            animation: rotateBg 20s linear infinite;
-            z-index: -2;
-            opacity: 1;
-            transition: opacity 0.5s ease;
-        }
-        
-        /* Spotlight Glow for Dark Mode */
-        body::after {
-            content: ''; position: absolute; width: 100%; height: 100%;
-            background: radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.15) 0%, transparent 60%);
-            z-index: -1;
-            pointer-events: none;
+        /* ---------- DYNAMIC BACKGROUND (Dark) ---------- */
+        body::before{
+            content:'';
+            position:fixed; inset:-12%;
+            z-index:-3;
+            pointer-events:none;
+            background-image:
+                radial-gradient(30% 30% at 10% 10%, rgba(139,92,246,0.22) 0%, rgba(139,92,246,0.12) 20%, transparent 45%),
+                radial-gradient(35% 35% at 90% 20%, rgba(6,182,212,0.18) 0%, rgba(6,182,212,0.08) 25%, transparent 50%),
+                radial-gradient(40% 40% at 50% 85%, rgba(79,70,229,0.16) 0%, rgba(79,70,229,0.06) 22%, transparent 55%);
+            background-size:180% 180%,200% 200%,200% 200%;
+            background-blend-mode:screen,screen,screen;
+            filter: blur(60px) saturate(1.05);
+            transform:scale(1.02);
+            animation:
+                blobShiftA 30s linear infinite,
+                blobShiftB 36s linear infinite,
+                hueShift 22s linear infinite;
+            opacity:1;
         }
 
-        /* LIGHT MODE: Breathing Mesh Gradient */
-        body.light-mode::before {
-            background: linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%);
-            background-size: 200% 200%;
-            animation: breatheBg 10s ease infinite;
-            opacity: 1;
-        }
-        body.light-mode::after { display: none; }
-
-        @keyframes rotateBg { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        @keyframes breatheBg { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-
-        /* --- GLASS CARD --- */
-        .glass-card {
-            background: var(--glass-bg);
-            backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
-            padding: 45px; border-radius: 30px;
-            border: 1px solid var(--glass-border);
-            box-shadow: var(--card-shadow);
-            width: 90%; max-width: 600px; /* Improved sizing */
-            text-align: center;
-            position: relative; z-index: 10;
-            transition: transform 0.3s ease, background 0.3s ease;
+        body::after{
+            content:'';
+            position:fixed; inset:-20%;
+            z-index:-2;
+            pointer-events:none;
+            background: conic-gradient(from 0deg at 50% 50%,
+                        rgba(255,80,123,0.35) 0deg,
+                        rgba(139,92,246,0.30) 60deg,
+                        rgba(6,182,212,0.28) 140deg,
+                        rgba(255,200,80,0.26) 220deg,
+                        rgba(255,80,123,0.35) 320deg);
+            filter: blur(90px) contrast(1.05);
+            mix-blend-mode: screen;
+            opacity: 0.65;
+            transform: rotate(0deg) scale(1.05);
+            animation: rotateGlow 28s linear infinite, pulseGlow 6s ease-in-out infinite;
         }
 
-        /* --- HEADER & LOGO --- */
-        h1 { margin: 0 0 10px 0; font-size: 2.8rem; display: flex; align-items: center; justify-content: center; gap: 15px; letter-spacing: -1px; }
-        .logo-text { 
-            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800;
+        /* subtle dark vignette to keep center legible */
+        .vignette{
+            position:fixed; inset:0; z-index:-1; pointer-events:none;
+            background: radial-gradient(60% 50% at 50% 45%, rgba(2,6,23,0.0) 0%, rgba(2,6,23,0.58) 100%);
+            mix-blend-mode: multiply;
         }
-        .gemini-logo { width: 45px; height: 45px; filter: drop-shadow(0 0 15px rgba(139, 92, 246, 0.4)); animation: float 6s ease-in-out infinite; }
-        @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-8px); } 100% { transform: translateY(0px); } }
 
-        /* --- SUGGESTION PILLS --- */
-        .suggestions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 25px; margin-top: 15px; }
-        .suggestion-pill { 
-            background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border);
-            padding: 8px 16px; border-radius: 50px; font-size: 0.85rem; color: var(--text-sub);
-            cursor: pointer; transition: all 0.2s;
+        /* ---------- ANIMATIONS ---------- */
+        @keyframes blobShiftA{
+            0% { background-position: 0% 10%, 100% 20%, 50% 90%; transform: translateZ(0) scale(1.02); }
+            25% { background-position: 15% 25%, 85% 10%, 40% 80%; }
+            50% { background-position: 30% 40%, 70% 30%, 60% 60%; transform: translateY(-2%) scale(1.03); }
+            75% { background-position: 10% 60%, 95% 45%, 45% 70%; }
+            100% { background-position: 0% 10%, 100% 20%, 50% 90%; transform: translateZ(0) scale(1.02); }
         }
-        .suggestion-pill:hover { background: var(--primary); color: white; border-color: var(--primary); transform: translateY(-2px); }
-        body.light-mode .suggestion-pill { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.1); color: var(--text-main); }
-        body.light-mode .suggestion-pill:hover { color: white; }
+        @keyframes blobShiftB{
+            0% { background-position: 70% 40%, 10% 60%, 20% 20%; }
+            50% { background-position: 60% 20%, 20% 30%, 25% 35%; }
+            100% { background-position: 70% 40%, 10% 60%, 20% 20%; }
+        }
+        @keyframes hueShift{
+            0% { filter: blur(60px) hue-rotate(0deg) saturate(1.05); }
+            50% { filter: blur(60px) hue-rotate(40deg) saturate(1.12); }
+            100% { filter: blur(60px) hue-rotate(0deg) saturate(1.05); }
+        }
+        @keyframes rotateGlow{ 0%{transform:rotate(0deg) scale(1.05)} 50%{transform:rotate(180deg) scale(1.07)} 100%{transform:rotate(360deg) scale(1.05)} }
+        @keyframes pulseGlow{ 0%{opacity:0.5} 50%{opacity:0.85; filter: blur(70px) contrast(1.15)} 100%{opacity:0.5} }
 
-        /* --- INPUT GROUP --- */
-        .input-group {
-            display: flex; align-items: center; background: var(--input-bg);
-            border-radius: 20px; padding: 8px 15px; margin-top: 25px;
-            border: 1px solid var(--glass-border); transition: 0.3s;
-            box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);
+        /* ---------- MAIN CONTAINER ---------- */
+        .app-wrap{
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:28px;
+            box-sizing:border-box;
         }
-        .input-group:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
-        .input-group.disabled { opacity: 0.6; pointer-events: none; filter: grayscale(1); }
 
-        input[type="text"] {
-            border: none; outline: none; flex-grow: 1; font-size: 1.1rem;
-            margin: 0 10px; color: var(--text-main); background: transparent; padding: 10px 0;
+        /* ---------- GLASS CARD ---------- */
+        .glass-card{
+            width:100%;
+            max-width:var(--max-ui-width);
+            border-radius:20px;
+            padding:36px;
+            background:var(--glass-bg);
+            border:1px solid var(--glass-border);
+            box-shadow:var(--card-shadow);
+            text-align:center;
+            position:relative;
+            z-index:10;
+            box-sizing:border-box;
+            transition: all .25s ease;
         }
-        body.light-mode input[type="text"] { color: #1e293b; }
 
-        .icon-btn { padding: 10px; border-radius: 12px; cursor: pointer; color: var(--text-sub); transition: 0.2s; display: flex; align-items: center; }
-        .icon-btn:hover { background: rgba(128,128,128,0.15); color: var(--text-main); }
+        /* make the card scrollable on small screens */
+        .glass-card-inner{
+            max-height: calc(100vh - 120px);
+            overflow:auto;
+            -webkit-overflow-scrolling: touch;
+            padding-right:6px;
+        }
 
-        /* --- CONTROLS ALIGNMENT FIX --- */
-        .controls-row { 
-            display: flex; justify-content: center; align-items: center; /* Vertical Center */
-            gap: 12px; margin-top: 25px; flex-wrap: wrap; 
+        /* ---------- HEADER ---------- */
+        h1{
+            margin:0 0 8px 0;
+            font-size:2.2rem;
+            display:flex; align-items:center; justify-content:center; gap:12px;
+            letter-spacing:-0.6px;
         }
-        
-        select {
-            background: var(--glass-bg); border: 1px solid var(--glass-border);
-            color: var(--text-main); padding: 10px 15px; border-radius: 12px;
-            outline: none; cursor: pointer; font-size: 0.9rem; text-align: center;
-            height: 42px; /* Fixed height for alignment */
+        .logo-text{
+            background:linear-gradient(135deg,var(--primary) 0%,var(--secondary) 100%);
+            -webkit-background-clip:text; -webkit-text-fill-color:transparent; font-weight:800;
         }
-        select option { background: #1e293b; color: white; }
-        body.light-mode select option { background: #fff; color: #333; }
+        .gemini-logo{ width:42px; height:42px; filter: drop-shadow(0 0 14px rgba(139,92,246,0.36)); animation: float 6s ease-in-out infinite; }
+        @keyframes float{ 0%{transform:translateY(0)} 50%{transform:translateY(-7px)} 100%{transform:translateY(0)} }
 
-        .switch-container { 
-            display: flex; align-items: center; gap: 10px; 
-            font-size: 0.9rem; color: var(--text-sub); 
-            background: var(--glass-bg); padding: 0 15px; /* Removed top/bottom padding to use height */
-            border-radius: 12px; border: 1px solid var(--glass-border);
-            height: 42px; /* Matching height with selects */
+        /* ---------- SUGGESTION PILLS ---------- */
+        .suggestions{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin:14px 0; }
+        .suggestion-pill{
+            background: rgba(255,255,255,0.04);
+            border:1px solid var(--glass-border);
+            padding:8px 14px; border-radius:999px; font-size:0.92rem; color:var(--text-sub);
+            cursor:pointer; transition: all .18s ease; touch-action: manipulation;
         }
-        
-        /* Toggle Switch */
-        .switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #64748b; transition: .4s; border-radius: 34px; }
-        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--success); }
-        input:checked + .slider:before { transform: translateX(16px); }
+        .suggestion-pill:hover{ background:var(--primary); color:#fff; transform:translateY(-3px); }
 
-        /* --- STATUS & STOP --- */
-        .status-container { height: 24px; margin-top: 20px; overflow: hidden; position: relative; }
-        .status-text {
-            font-size: 0.95rem; font-weight: 500; color: var(--primary);
-            position: absolute; width: 100%; text-align: center;
-            opacity: 0; transform: translateY(10px); transition: all 0.5s ease;
+        /* ---------- INPUT GROUP ---------- */
+        .input-group{
+            display:flex; align-items:center; gap:8px;
+            background:var(--input-bg);
+            border-radius:14px; padding:8px; margin-top:18px;
+            border:1px solid var(--glass-border);
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.06);
         }
-        .status-text.active { opacity: 1; transform: translateY(0); }
+        .input-group.disabled{ opacity:0.6; pointer-events:none; filter:grayscale(0.6); }
+        .icon-btn{ padding:10px; border-radius:10px; cursor:pointer; color:var(--text-sub); display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
+        .icon-btn:active{ transform:scale(.98) }
+        input[type="text"]{
+            border:0; outline:0; flex:1; font-size:1rem; background:transparent; color:var(--text-main); padding:12px 6px;
+            min-width:0;
+        }
 
-        .stop-pill {
-            background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444;
-            padding: 10px 30px; border-radius: 50px; font-weight: 600; cursor: pointer;
-            display: none; margin: 25px auto 0; transition: 0.2s; font-size: 0.9rem;
-        }
-        .stop-pill:hover { background: #ef4444; color: white; box-shadow: 0 5px 15px rgba(239, 68, 68, 0.3); }
+        /* ---------- CONTROLS ---------- */
+        .controls-row{ display:flex; gap:10px; align-items:center; justify-content:center; margin-top:18px; flex-wrap:wrap; }
+        select{ background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main); padding:10px 14px; border-radius:10px; font-size:0.95rem; height:44px; min-width:120px; }
+        .switch-container{ display:flex; align-items:center; gap:10px; background:var(--glass-bg); padding:0 12px; border-radius:10px; height:44px; border:1px solid var(--glass-border); color:var(--text-sub); font-size:0.95rem; }
 
-        /* --- RESULT IMAGE --- */
-        .result-img {
-            width: 100%; border-radius: 16px; margin-top: 25px; border: 1px solid var(--glass-border);
-            display: none; animation: popIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-        }
-        @keyframes popIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        /* toggle */
+        .switch{ position:relative; display:inline-block; width:36px; height:20px; }
+        .switch input{ opacity:0; width:0; height:0; }
+        .slider{ position:absolute; inset:0; background:#64748b; border-radius:34px; transition:.25s; }
+        .slider:before{ content:''; position:absolute; left:2px; bottom:2px; width:16px; height:16px; background:#fff; border-radius:50%; transition:.25s; }
+        input:checked + .slider{ background:var(--success); }
+        input:checked + .slider:before{ transform:translateX(16px); }
 
-        /* --- NAVIGATION --- */
-        .top-bar { position: absolute; top: 25px; right: 30px; z-index: 100; display: flex; gap: 12px; }
-        .nav-btn {
-            background: var(--glass-bg); backdrop-filter: blur(10px); border: 1px solid var(--glass-border);
-            color: var(--text-main); padding: 10px 16px; border-radius: 12px; cursor: pointer;
-            font-size: 0.9rem; font-weight: 500; transition: 0.2s;
-        }
-        .nav-btn:hover { background: rgba(255,255,255,0.15); transform: translateY(-2px); }
+        /* ---------- STATUS & STOP ---------- */
+        .status-container{ height:28px; margin-top:18px; position:relative; overflow:hidden; }
+        .status-text{ font-size:0.95rem; font-weight:600; color:var(--primary); position:absolute; width:100%; left:0; top:0; opacity:0; transform:translateY(6px); transition:all .36s ease; text-align:center; }
+        .status-text.active{ opacity:1; transform:translateY(0); }
 
-        /* --- HISTORY DRAWER (IMPROVED) --- */
-        #historyDrawer {
-            position: fixed; top: 0; right: -420px; width: 380px; height: 100%;
-            background: var(--drawer-bg); border-left: 1px solid var(--glass-border);
-            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-            padding: 30px; z-index: 2000; transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            overflow-y: auto; box-shadow: -20px 0 50px rgba(0,0,0,0.5); color: var(--text-main);
+        .stop-pill{
+            display:inline-block; margin-top:18px; background: rgba(239,68,68,0.09); color:var(--danger); border:1px solid var(--danger); padding:10px 22px; border-radius:999px; font-weight:700; cursor:pointer; font-size:0.94rem;
         }
-        .history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-        .history-item { 
-            padding: 15px; background: rgba(255,255,255,0.03); border-radius: 12px; 
-            margin-bottom: 12px; border: 1px solid var(--glass-border); position: relative; transition: 0.2s;
-        }
-        .history-item:hover { background: rgba(255,255,255,0.08); transform: translateX(-4px); }
-        body.light-mode .history-item { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.05); }
-        
-        .del-btn {
-            position: absolute; right: 15px; top: 15px; color: #ef4444; 
-            cursor: pointer; opacity: 0; transition: 0.2s; background: none; border: none; font-size: 1rem;
-        }
-        .history-item:hover .del-btn { opacity: 1; }
-        
-        .clear-all-btn { 
-            width: 100%; padding: 12px; background: rgba(239, 68, 68, 0.1); color: #ef4444; 
-            border: 1px solid #ef4444; border-radius: 12px; margin-bottom: 25px; 
-            cursor: pointer; font-weight: 600; transition: 0.2s;
-        }
-        .clear-all-btn:hover { background: #ef4444; color: white; }
 
-        /* --- MODALS --- */
-        .modal-overlay { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0,0,0,0.7); display: none; 
-            justify-content: center; align-items: center; z-index: 3000; 
-            backdrop-filter: blur(8px); 
-        }
-        .modal { 
-            background: var(--modal-bg); color: var(--text-main); 
-            padding: 35px; border-radius: 24px; width: 90%; max-width: 450px; 
-            border: 1px solid var(--glass-border); 
-            box-shadow: 0 25px 50px rgba(0,0,0,0.5); text-align: left;
-        }
-        .settings-input { 
-            width: 100%; padding: 12px; margin: 15px 0 25px 0; 
-            border: 1px solid var(--glass-border); background: rgba(255,255,255,0.05); 
-            color: inherit; border-radius: 10px; box-sizing: border-box; outline: none; 
-        }
-        body.light-mode .settings-input { background: #f1f5f9; border-color: #cbd5e1; color: #333; }
+        /* ---------- RESULT IMAGE ---------- */
+        .result-img{ width:100%; border-radius:12px; margin-top:18px; border:1px solid var(--glass-border); display:none; box-shadow:0 10px 40px rgba(0,0,0,0.28); }
 
-        /* --- LISTENING OVERLAY --- */
-        #listening-overlay {
-            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(2, 6, 23, 0.95); z-index: 4000;
-            justify-content: center; align-items: center; flex-direction: column;
+        /* ---------- TOP BAR (desktop) ---------- */
+        .top-bar{
+            position:fixed; right:28px; top:22px; display:flex; gap:10px; z-index:60;
         }
-        .pulse-ring {
-            width: 100px; height: 100px; background: var(--danger); border-radius: 50%;
-            display: flex; justify-content: center; align-items: center;
-            animation: pulse-ring 2s infinite; font-size: 40px; color: white;
-            box-shadow: 0 0 30px var(--danger);
+        .nav-btn{ background:var(--glass-bg); backdrop-filter: blur(8px); border-radius:10px; padding:10px 12px; border:1px solid var(--glass-border); color:var(--text-main); font-weight:600; cursor:pointer; min-width:44px; display:flex; align-items:center; justify-content:center; gap:8px; }
+        .nav-btn:active{ transform:translateY(1px); }
+
+        /* ---------- HISTORY DRAWER ---------- */
+        #historyDrawer{
+            position:fixed; right:-420px; top:0; height:100%; width:380px; background:var(--drawer-bg); border-left:1px solid var(--glass-border); z-index:70; padding:22px; box-sizing:border-box; transition:right .36s cubic-bezier(.16,1,.3,1); overflow:auto;
+            box-shadow:-18px 0 60px rgba(0,0,0,0.45);
         }
-        @keyframes pulse-ring {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); transform: scale(1); }
-            70% { box-shadow: 0 0 0 40px rgba(239, 68, 68, 0); transform: scale(1.1); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); transform: scale(1); }
+        #historyDrawer.open{ right:0; }
+        .history-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+        .history-item{ background: rgba(255,255,255,0.03); padding:12px; border-radius:10px; margin-bottom:12px; border:1px solid var(--glass-border); position:relative; }
+        .del-btn{ position:absolute; right:10px; top:10px; color:var(--danger); background:none; border:0; cursor:pointer; font-size:0.98rem; opacity:0; transition:opacity .18s; }
+        .history-item:hover .del-btn{ opacity:1; }
+
+        .clear-all-btn{ width:100%; padding:10px; border-radius:10px; background: rgba(239,68,68,0.08); border:1px solid var(--danger); color:var(--danger); font-weight:700; margin-bottom:14px; cursor:pointer; }
+
+        /* ---------- MODALS ---------- */
+        .modal-overlay{ position:fixed; inset:0; background: rgba(0,0,0,0.6); display:none; align-items:center; justify-content:center; z-index:90; }
+        .modal{ width:92%; max-width:460px; background:var(--modal-bg); padding:22px; border-radius:14px; border:1px solid var(--glass-border); box-shadow:0 20px 60px rgba(0,0,0,0.6); color:var(--text-main); }
+
+        .settings-input{ width:100%; padding:12px; border-radius:10px; background:rgba(255,255,255,0.04); border:1px solid var(--glass-border); color:inherit; box-sizing:border-box; }
+
+        /* ---------- LISTENING OVERLAY ---------- */
+        #listening-overlay{ display:none; position:fixed; inset:0; background: rgba(2,6,23,0.95); z-index:100; align-items:center; justify-content:center; flex-direction:column; }
+        .pulse-ring{ width:100px; height:100px; border-radius:50%; background:var(--danger); display:flex; align-items:center; justify-content:center; color:#fff; box-shadow:0 0 30px var(--danger); animation:pulse-ring 2s infinite; }
+        @keyframes pulse-ring{ 0%{box-shadow:0 0 0 0 rgba(239,68,68,0.7); transform:scale(1)} 70%{box-shadow:0 0 0 40px rgba(239,68,68,0); transform:scale(1.06)} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0); transform:scale(1)} }
+
+        /* ---------- SMALL SCREEN / MOBILE ADJUSTMENTS ---------- */
+        @media (max-width: 920px){
+            :root{ --max-ui-width: 720px; }
+            .glass-card{ padding:28px; border-radius:16px; }
+            h1{ font-size:1.9rem; }
+            .top-bar{ right:16px; top:14px; }
+            #historyDrawer{ width:320px; }
+            select{ min-width:110px; font-size:0.92rem; }
         }
+
+        /* Mobile: make card full-width, controls stack, bottom nav, drawer bottom sheet */
+        @media (max-width: 640px){
+            html,body{ overflow:auto; } /* allow page scroll if needed */
+            .app-wrap{ padding:12px; align-items:flex-start; justify-content:flex-start; }
+            .glass-card{ width:100%; border-radius:14px; padding:18px; margin:12px 0; box-shadow: 0 14px 40px rgba(0,0,0,0.4); }
+            .glass-card-inner{ max-height: calc(100vh - 130px); overflow:auto; padding-right:0; }
+            h1{ font-size:1.5rem; gap:10px; }
+            .gemini-logo{ width:36px; height:36px; }
+            .suggestions{ gap:8px; margin:10px 0; }
+            .suggestion-pill{ padding:8px 10px; font-size:0.9rem; }
+            .input-group{ padding:6px; border-radius:12px; }
+            input[type="text"]{ font-size:0.98rem; padding:10px 6px; }
+            .controls-row{ width:100%; display:flex; flex-direction:column; gap:10px; align-items:stretch; margin-top:12px; }
+            select{ width:100%; min-width:0; }
+            .switch-container{ width:100%; justify-content:space-between; padding:8px 12px; }
+            .status-container{ margin-top:12px; }
+            .stop-pill{ width:100%; text-align:center; padding:12px 10px; }
+            .result-img{ margin-top:12px; border-radius:10px; }
+
+            /* move top-bar controls to a bottom bar for mobile */
+            .top-bar{ top:auto; bottom:12px; right:12px; left:12px; display:flex; justify-content:space-between; gap:10px; background:transparent; position:fixed; z-index:80; }
+            .top-bar .nav-btn{ flex:1; min-width:0; padding:10px 8px; font-size:0.92rem; border-radius:10px; }
+            .top-bar .nav-btn i{ margin:0; }
+
+            /* make history drawer bottom-sheet */
+            #historyDrawer{
+                right:0; left:0; bottom:-100%; top:auto; height:62%; width:100%; border-left:none; border-top:1px solid var(--glass-border); border-radius:12px 12px 0 0; transition:bottom .36s cubic-bezier(.16,1,.3,1);
+                padding:18px; box-shadow: 0 -18px 40px rgba(0,0,0,0.6);
+            }
+            #historyDrawer.open{ bottom:0; }
+            .history-header h2{ font-size:1.12rem; }
+            .modal{ width:94%; padding:16px; border-radius:12px; }
+            .vignette{ display:none; } /* vignette can be removed on very small devices for clarity */
+        }
+
+        /* ---------- SMALL HELPER ADJUSTMENTS ---------- */
+        @media (prefers-reduced-motion: reduce){
+            *{ animation: none !important; transition: none !important; }
+        }
+
+        /* ensure inputs & buttons are large enough for touch */
+        button, .icon-btn, .nav-btn, .suggestion-pill, .clear-all-btn { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+
     </style>
 </head>
 <body>
-
+    <!-- Listening overlay -->
     <div id="listening-overlay">
         <div class="pulse-ring"><i class="fas fa-microphone"></i></div>
-        <h2 style="font-size: 2.2rem; color: white; margin-top: 30px; font-weight: 700;">Listening...</h2>
-        <p style="color: #94a3b8; font-size: 1.1rem;">Speak now</p>
+        <h2 style="font-size:2rem; color:white; margin-top:20px; font-weight:700;">Listening...</h2>
+        <p style="color:#94a3b8; font-size:1rem;">Speak now</p>
     </div>
 
-    <div class="top-bar">
-        <button class="nav-btn" onclick="toggleTheme()"><i class="fas fa-moon"></i></button>
-        <button class="nav-btn" onclick="openInfo()">Info</button> 
-        <button class="nav-btn" onclick="openSettings()">Keys</button> 
-        <button class="nav-btn" onclick="toggleDrawer()"><i class="fas fa-history"></i></button>
-    </div>
+    <!-- dynamic vignette overlay -->
+    <div class="vignette" aria-hidden="true"></div>
 
-    <div class="glass-card">
-        <h1>
-            <img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" class="gemini-logo">
-            Gemini<span class="logo-text">Agent</span>
-        </h1>
-        
-        <div class="suggestions">
-            <div class="suggestion-pill" onclick="quickTask('Check the weather')">🌤️ Weather</div>
-            <div class="suggestion-pill" onclick="quickTask('Tech News today')">📰 Tech News</div>
-            <div class="suggestion-pill" onclick="quickTask('Play Lofi Music')">🎵 Lofi Music</div>
-        </div>
-        
-        <div class="input-group" id="mainInputGroup">
-            <div class="icon-btn" id="micBtn" onclick="toggleVoice()"><i class="fas fa-microphone"></i></div>
-            <input type="text" id="userInput" placeholder="Ask me anything..." autocomplete="off">
-            <div class="icon-btn" onclick="sendTask()"><i class="fas fa-paper-plane"></i></div>
-        </div>
-        
-        <div class="controls-row">
-            <select id="langSelect">
-                <option value="en-US">English</option>
-                <option value="te-IN">Telugu (తెలుగు)</option>
-                <option value="hi-IN">Hindi (हिंदी)</option>
-                <option value="ta-IN">Tamil (தமிழ்)</option>
-                <option value="kn-IN">Kannada (ಕನ್ನಡ)</option>
-                <option value="es-ES">Spanish (Español)</option>
-            </select>
+    <div class="app-wrap">
+        <div class="glass-card" role="main" aria-label="Gemini Agent">
+            <div class="glass-card-inner">
+                <h1>
+                    <img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" class="gemini-logo" alt="logo">
+                    Gemini<span class="logo-text">Agent</span>
+                </h1>
 
-            <select id="modelSelect">
-                <option value="gemini-2.0-flash">⚡ Flash 2.0</option>
-                <option value="gemini-1.5-pro">🧠 Pro 1.5</option>
-            </select>
-            
-            <select id="voiceSelect">
-                <option value="auto">✨ Auto Voice</option>
-            </select>
+                <div class="suggestions" aria-hidden="false">
+                    <div class="suggestion-pill" onclick="quickTask('Check the weather')">🌤️ Weather</div>
+                    <div class="suggestion-pill" onclick="quickTask('Tech News today')">📰 Tech News</div>
+                    <div class="suggestion-pill" onclick="quickTask('Play Lofi Music')">🎵 Lofi Music</div>
+                </div>
 
-            <div class="switch-container">
-                <label class="switch">
-                    <input type="checkbox" id="visionToggle">
-                    <span class="slider"></span>
-                </label>
-                <span>Vision</span>
+                <div class="input-group" id="mainInputGroup" aria-label="User input">
+                    <div class="icon-btn" id="micBtn" onclick="toggleVoice()" title="Use voice"><i class="fas fa-microphone" aria-hidden="true"></i></div>
+                    <input type="text" id="userInput" placeholder="Ask me anything..." autocomplete="off" aria-label="Type your question">
+                    <div class="icon-btn" onclick="sendTask()" title="Send"><i class="fas fa-paper-plane" aria-hidden="true"></i></div>
+                </div>
+
+                <div class="controls-row">
+                    <select id="langSelect" aria-label="Language">
+                        <option value="en-US">English</option>
+                        <option value="te-IN">Telugu (తెలుగు)</option>
+                        <option value="hi-IN">Hindi (हिंदी)</option>
+                        <option value="ta-IN">Tamil (தமிழ்)</option>
+                        <option value="kn-IN">Kannada (ಕನ್ನಡ)</option>
+                        <option value="es-ES">Spanish (Español)</option>
+                    </select>
+
+                    <select id="modelSelect" aria-label="Model selection">
+                        <option value="gemini-2.0-flash">⚡ Flash 2.0</option>
+                        <option value="gemini-1.5-pro">🧠 Pro 1.5</option>
+                    </select>
+
+                    <select id="voiceSelect" aria-label="Voice selection">
+                        <option value="auto">✨ Auto Voice</option>
+                    </select>
+
+                    <div class="switch-container" aria-hidden="false" title="Vision mode">
+                        <label class="switch" style="margin-right:8px;">
+                            <input type="checkbox" id="visionToggle">
+                            <span class="slider" aria-hidden="true"></span>
+                        </label>
+                        <div style="flex:1; text-align:left;">Vision</div>
+                    </div>
+                </div>
+
+                <div class="status-container" role="status" aria-live="polite">
+                    <div id="statusText" class="status-text active">Ready to assist.</div>
+                </div>
+
+                <button class="stop-pill" id="stopBtn" onclick="stopTask()" style="display:none;">🛑 STOP AGENT</button>
+
+                <img id="resultImage" class="result-img" alt="Result Screenshot">
+
+                <!-- small spacer for mobile bottom bar comfort -->
+                <div style="height:26px"></div>
             </div>
         </div>
-
-        <div class="status-container">
-            <div id="statusText" class="status-text active">Ready to assist.</div>
-        </div>
-
-        <button class="stop-pill" id="stopBtn" onclick="stopTask()">🛑 STOP AGENT</button>
-        
-        <img id="resultImage" class="result-img" alt="Result Screenshot">
     </div>
 
-    <div class="modal-overlay" id="settingsModal" onclick="closeModal(event, 'settingsModal')">
-        <div class="modal">
-            <h2 style="margin-top:0; color:var(--primary);">⚙️ Admin Settings</h2>
-            <p style="font-size:0.95rem; opacity:0.8;">Update the API Key for this session.</p>
-            <label style="font-size:0.9rem; font-weight:600;">Gemini API Key</label>
-            <input type="text" id="apiKeyInput" class="settings-input" placeholder="Paste new key...">
-            <button class="save-btn" onclick="updateServerKey()">🔄 Update Key</button>
+    <!-- top bar / mobile bottom bar -->
+    <div class="top-bar" role="navigation" aria-label="Top controls">
+        <button class="nav-btn" onclick="toggleTheme()" title="Toggle theme"><i class="fas fa-moon" aria-hidden="true"></i></button>
+        <button class="nav-btn" onclick="openInfo()" title="Info">Info</button>
+        <button class="nav-btn" onclick="openSettings()" title="Keys">Keys</button>
+        <button class="nav-btn" onclick="toggleDrawer()" title="History"><i class="fas fa-history" aria-hidden="true"></i></button>
+    </div>
+
+    <!-- settings modal -->
+    <div class="modal-overlay" id="settingsModal" onclick="closeModal(event,'settingsModal')">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+            <h2 id="settingsTitle" style="margin-top:0; color:var(--primary)">⚙️ Admin Settings</h2>
+            <p style="opacity:.8; margin:0 0 8px 0;">Update the API Key for this session.</p>
+            <label style="font-weight:600; font-size:.95rem;">Gemini API Key</label>
+            <input id="apiKeyInput" class="settings-input" type="text" placeholder="Paste new key...">
+            <div style="display:flex; gap:10px; margin-top:12px;">
+                <button class="nav-btn" onclick="updateServerKey()">🔄 Update Key</button>
+                <button class="nav-btn" onclick="document.getElementById('settingsModal').style.display='none'">Close</button>
+            </div>
         </div>
     </div>
 
-    <div class="modal-overlay" id="infoModal" onclick="closeModal(event, 'infoModal')">
+    <!-- info modal -->
+    <div class="modal-overlay" id="infoModal" onclick="closeModal(event,'infoModal')">
         <div class="modal" id="infoContent">Loading...</div>
     </div>
 
-    <div id="historyDrawer">
+    <!-- history drawer / bottom sheet -->
+    <div id="historyDrawer" aria-hidden="true">
         <div class="history-header">
-            <h2 style="margin:0; font-size: 1.5rem;">History</h2>
-            <i class="fas fa-times" onclick="toggleDrawer()" style="cursor:pointer; font-size: 1.2rem;"></i>
+            <h2 style="margin:0; font-size:1.25rem;">History</h2>
+            <i class="fas fa-times" style="cursor:pointer" onclick="toggleDrawer()"></i>
         </div>
         <button class="clear-all-btn" onclick="clearHistory()">🗑️ Clear All History</button>
         <div id="historyList"></div>
     </div>
 
     <script>
+        /* ---------- DOM elements ---------- */
         const input = document.getElementById('userInput');
         const inputGroup = document.getElementById('mainInputGroup');
         const statusText = document.getElementById('statusText');
@@ -379,7 +427,11 @@
         const visionToggle = document.getElementById('visionToggle');
         const resultImage = document.getElementById('resultImage');
         const listeningOverlay = document.getElementById('listening-overlay');
+        const historyDrawer = document.getElementById('historyDrawer');
+        const settingsModal = document.getElementById('settingsModal');
+        const infoModal = document.getElementById('infoModal');
 
+        /* ---------- Voice / ticker state ---------- */
         let recognition;
         let tickerInterval;
         const messages = [
@@ -390,86 +442,79 @@
             "Verifying the output..."
         ];
 
-        // --- TICKER LOGIC ---
-        function setStatus(text, color = "var(--primary)") {
+        function setStatus(text, color = "var(--primary)"){
             statusText.classList.remove('active');
             setTimeout(() => {
                 statusText.innerText = text;
                 statusText.style.color = color;
                 statusText.classList.add('active');
-            }, 300);
+            }, 240);
         }
 
-        function startTicker() {
+        function startTicker(){
             let i = 0;
             setStatus(messages[0]);
             tickerInterval = setInterval(() => {
-                i = (i + 1) % messages.length;
+                i = (i+1) % messages.length;
                 setStatus(messages[i]);
-            }, 3000);
+            }, 2800);
         }
 
-        function stopTicker(finalMsg, isError = false) {
+        function stopTicker(finalMsg, isError=false){
             clearInterval(tickerInterval);
             setStatus(finalMsg, isError ? "var(--danger)" : "var(--success)");
         }
 
-        // --- VOICE LOGIC ---
-        function loadVoices() {
-            const voices = window.speechSynthesis.getVoices();
-            const opts = voices.map((v, i) => `<option value="${i}">${v.name.slice(0, 20)}</option>`).join('');
+        /* ---------- Speech ---------- */
+        function loadVoices(){
+            const voices = window.speechSynthesis.getVoices() || [];
+            const opts = voices.map((v,i) => `<option value="${i}">${v.name.slice(0,22)}</option>`).join('');
             voiceSelect.innerHTML = '<option value="auto">✨ Auto Voice</option>' + opts;
         }
         window.speechSynthesis.onvoiceschanged = loadVoices;
+        loadVoices();
 
-        function toggleVoice() {
+        function toggleVoice(){
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SpeechRecognition) return alert("Use Chrome for voice.");
-            
+            if(!SpeechRecognition) return alert("Use Chrome for voice features.");
             recognition = new SpeechRecognition();
             recognition.lang = langSelect.value;
-            
             recognition.onstart = () => listeningOverlay.style.display = 'flex';
             recognition.onend = () => listeningOverlay.style.display = 'none';
-            recognition.onresult = (e) => {
-                input.value = e.results[0][0].transcript;
-                sendTask();
-            };
+            recognition.onresult = (e) => { input.value = e.results[0][0].transcript; sendTask(); };
             recognition.start();
         }
 
-        function speak(text) {
+        function speak(text){
             window.speechSynthesis.cancel();
             const u = new SpeechSynthesisUtterance(text);
             u.lang = langSelect.value;
-            
-            if(voiceSelect.value !== 'auto') {
-                u.voice = window.speechSynthesis.getVoices()[voiceSelect.value];
+            if(voiceSelect.value !== 'auto'){
+                const v = window.speechSynthesis.getVoices()[voiceSelect.value];
+                if(v) u.voice = v;
             } else {
                 const voices = window.speechSynthesis.getVoices();
-                const targetLang = langSelect.value;
-                let bestVoice = voices.find(v => v.lang === targetLang && v.name.includes("Google"));
-                if (!bestVoice) bestVoice = voices.find(v => v.lang === targetLang);
-                if (bestVoice) u.voice = bestVoice;
+                let best = voices.find(v => v.lang === langSelect.value && v.name.includes("Google"));
+                if(!best) best = voices.find(v=>v.lang===langSelect.value);
+                if(best) u.voice = best;
             }
             window.speechSynthesis.speak(u);
         }
 
-        // --- MAIN LOGIC ---
-        async function sendTask() {
+        /* ---------- Main actions ---------- */
+        async function sendTask(){
             const text = input.value;
-            if (!text) return;
-
+            if(!text) return;
             input.disabled = true;
             inputGroup.classList.add('disabled');
             stopBtn.style.display = 'block';
             resultImage.style.display = 'none';
             startTicker();
 
-            try {
+            try{
                 const res = await fetch('/run_agent', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
                     body: JSON.stringify({
                         command: text,
                         language: langSelect.options[langSelect.selectedIndex].text,
@@ -477,14 +522,12 @@
                         use_vision: visionToggle.checked
                     })
                 });
-                
                 const data = await res.json();
-                input.value = ''; 
-
-                if (data.status === 'success') {
+                input.value = '';
+                if(data.status === 'success'){
                     stopTicker("Done!");
-                    speak(data.message);
-                    if (data.screenshot) {
+                    if(data.message) speak(data.message);
+                    if(data.screenshot){
                         resultImage.src = `data:image/png;base64,${data.screenshot}`;
                         resultImage.style.display = 'block';
                     }
@@ -492,10 +535,9 @@
                     stopTicker("Error Occurred", true);
                     speak("Sorry, I encountered an error.");
                 }
-
-            } catch (e) {
+            }catch(e){
                 stopTicker("Connection Failed", true);
-            } finally {
+            }finally{
                 input.disabled = false;
                 inputGroup.classList.remove('disabled');
                 stopBtn.style.display = 'none';
@@ -503,102 +545,130 @@
             }
         }
 
-        function quickTask(cmd) { input.value = cmd; sendTask(); }
-        
-        async function stopTask() {
-            await fetch('/stop', {method: 'POST'});
+        function quickTask(cmd){ input.value = cmd; sendTask(); }
+
+        async function stopTask(){
+            await fetch('/stop', { method:'POST' });
             stopTicker("Stopped by User", true);
         }
 
-        // --- THEME & UI HELPERS ---
-        function toggleTheme() {
+        /* ---------- UI helpers ---------- */
+        function toggleTheme(){
             document.body.classList.toggle('light-mode');
-            const icon = document.querySelector('.nav-btn i.fa-moon');
-            if(icon) icon.className = document.body.classList.contains('light-mode') ? 'fas fa-sun' : 'fas fa-moon';
+            const moonIcon = document.querySelector('.nav-btn i.fas');
+            if(moonIcon){
+                moonIcon.className = document.body.classList.contains('light-mode') ? 'fas fa-sun' : 'fas fa-moon';
+            }
         }
 
-        function openSettings() { document.getElementById('settingsModal').style.display = 'flex'; }
-        function closeModal(e, id) { 
-            if(e.target.id === id) document.getElementById(id).style.display = 'none'; 
+        function openSettings(){ settingsModal.style.display='flex'; }
+        function openInfo(){ 
+            infoModal.style.display='flex';
+            loadUsageIntoInfo();
         }
 
-        async function openInfo() {
-            let usageHtml = "Loading usage...";
-            try {
-                const res = await fetch('/usage');
-                const stats = await res.json();
-                const pct = (stats.used / stats.limit) * 100;
-                usageHtml = `
-                    <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:10px; margin-bottom:20px; border:1px solid var(--glass-border);">
-                        <h4 style="margin:0 0 10px 0;">Daily API Usage</h4>
-                        <div class="usage-container"><div class="usage-fill" style="width:${pct}%"></div></div>
-                        <div style="font-size:0.85rem; margin-top:5px; text-align:right; opacity:0.8;">${stats.used} / ${stats.limit}</div>
-                    </div>`;
-            } catch(e) { usageHtml = "<p>Unavailable.</p>"; }
-
-            document.getElementById('infoContent').innerHTML = `
-                <h2 style="color:var(--primary); margin-top:0;">ℹ️ About Agent</h2>
-                ${usageHtml}
-                <p><strong>Vision Mode:</strong> Enables AI to "see" webpage layout for better clicks.</p>
-                <p><strong>Multilingual:</strong> Supports regional languages with auto-accent detection.</p>
-                <p style="margin-top:20px; font-size:0.9rem; opacity:0.6;">Developer: Mallireddy Gari Janakiram</p>
-            `;
-            document.getElementById('infoModal').style.display = 'flex';
+        function closeModal(e, id){
+            if(e.target && e.target.id === id){
+                document.getElementById(id).style.display = 'none';
+            }
         }
 
-        async function updateServerKey() {
+        async function updateServerKey(){
             const key = document.getElementById('apiKeyInput').value;
             if(!key) return alert("Enter key!");
-            try {
-                const res = await fetch('/update_key', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+            try{
+                const res = await fetch('/update_key',{
+                    method:'POST', headers:{'Content-Type':'application/json'},
                     body: JSON.stringify({ new_key: key })
                 });
                 const data = await res.json();
-                alert(data.message);
-                if(data.status==='success') document.getElementById('settingsModal').style.display='none';
-            } catch(e) { alert("Failed"); }
+                alert(data.message || 'Updated');
+                if(data.status === 'success') settingsModal.style.display='none';
+            }catch(e){ alert('Failed'); }
         }
 
-        // --- HISTORY LOGIC ---
-        function toggleDrawer() {
-            const d = document.getElementById('historyDrawer');
-            d.style.right = d.style.right === '0px' ? '-420px' : '0px';
-            if (d.style.right === '0px') loadHistory();
+        async function loadUsageIntoInfo(){
+            const content = document.getElementById('infoContent');
+            content.innerHTML = 'Loading usage...';
+            try{
+                const res = await fetch('/usage');
+                const stats = await res.json();
+                const pct = Math.round((stats.used / (stats.limit || 1)) * 100);
+                content.innerHTML = `
+                    <h2 style="color:var(--primary); margin-top:0;">ℹ️ About Agent</h2>
+                    <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; margin-bottom:10px; border:1px solid var(--glass-border);">
+                        <strong>Daily API Usage</strong>
+                        <div style="height:10px; background:rgba(255,255,255,0.03); border-radius:8px; margin:8px 0;">
+                            <div style="width:${pct}%; height:100%; background:linear-gradient(90deg,var(--primary),var(--secondary)); border-radius:8px;"></div>
+                        </div>
+                        <div style="font-size:.9rem; opacity:.8; text-align:right">${stats.used} / ${stats.limit}</div>
+                    </div>
+                    <p><strong>Vision Mode:</strong> Enables AI to "see" webpage layout for better clicks.</p>
+                    <p><strong>Multilingual:</strong> Supports regional languages with auto-accent detection.</p>
+                    <p style="margin-top:12px; font-size:.9rem; opacity:.7">Developer: Mallireddy Gari Janakiram</p>
+                `;
+            }catch(e){
+                content.innerHTML = '<p>Unavailable.</p>';
+            }
         }
 
-        async function loadHistory() {
-            try {
+        /* ---------- HISTORY ---------- */
+        async function loadHistory(){
+            try{
                 const res = await fetch('/history');
                 const data = await res.json();
                 const list = document.getElementById('historyList');
-                list.innerHTML = data.map(i => `
+                list.innerHTML = (data || []).map(i=>`
                     <div class="history-item">
-                        <div style="font-weight:600; margin-bottom:4px; font-size:0.95rem;">${i.command}</div>
-                        <div style="font-size:0.8rem; opacity:0.6;">${i.time} • ${i.status}</div>
-                        <button class="del-btn" onclick="deleteItem('${i._id}', this)">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <div style="font-weight:700; margin-bottom:6px; font-size:0.95rem;">${escapeHtml(i.command)}</div>
+                        <div style="font-size:0.83rem; opacity:0.7;">${i.time} • ${i.status}</div>
+                        <button class="del-btn" onclick="deleteItem('${i._id}', this)"><i class="fas fa-trash"></i></button>
                     </div>
-                `).join('');
-            } catch(e) {}
+                `).join('') || '<div style="opacity:.7">No history</div>';
+            }catch(e){}
         }
 
-        async function deleteItem(id, btn) {
-            if(!confirm("Delete?")) return;
-            btn.closest('.history-item').style.opacity = '0'; // Optimistic removal
-            setTimeout(() => btn.closest('.history-item').remove(), 300);
-            await fetch(`/history/${id}`, {method: 'DELETE'});
+        async function deleteItem(id, btn){
+            if(!confirm('Delete?')) return;
+            const item = btn.closest('.history-item');
+            item.style.transition = 'opacity .28s, transform .28s';
+            item.style.opacity = '0';
+            item.style.transform = 'translateX(8px)';
+            setTimeout(()=> item.remove(), 300);
+            await fetch(`/history/${id}`, { method:'DELETE' }).catch(()=>{});
         }
 
-        async function clearHistory() {
-            if(!confirm("Clear ALL history?")) return;
-            document.getElementById('historyList').innerHTML = "";
-            await fetch('/history', {method: 'DELETE'});
+        async function clearHistory(){
+            if(!confirm('Clear ALL history?')) return;
+            document.getElementById('historyList').innerHTML = '';
+            await fetch('/history', { method:'DELETE' }).catch(()=>{});
         }
 
+        function toggleDrawer(){
+            const open = historyDrawer.classList.toggle('open');
+            historyDrawer.setAttribute('aria-hidden', !open);
+            // if opening, refresh
+            if(open) loadHistory();
+        }
+
+        /* ---------- UTILITIES ---------- */
+        function escapeHtml(s = ''){
+            return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        /* ---------- Init ---------- */
         loadHistory();
         loadVoices();
+
+        /* keep modals closable by Escape */
+        window.addEventListener('keydown', (e) => {
+            if(e.key === 'Escape'){
+                settingsModal.style.display='none';
+                infoModal.style.display='none';
+                if(historyDrawer.classList.contains('open')) toggleDrawer();
+            }
+        });
+
     </script>
 </body>
 </html>
