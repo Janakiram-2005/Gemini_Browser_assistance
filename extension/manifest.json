@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Omni-Agent",
+  "version": "1.0",
+  "description": "AI Copilot that controls tabs and reads screens.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:5000/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open Gemini Agent"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
