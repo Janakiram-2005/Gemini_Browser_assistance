@@ -8,7 +8,8 @@
     "activeTab",
     "scripting",
     "tabs",
-    "storage"
+    "storage",
+    "audioCapture"
   ],
   "host_permissions": [
     "http://127.0.0.1:5000/*",

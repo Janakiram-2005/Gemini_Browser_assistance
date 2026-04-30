@@ -28,7 +28,6 @@
       position: relative; 
       backdrop-filter: blur(12px); 
       box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-      transition: transform 0.2s ease;
     }
 
     /* --- HEADER --- */
@@ -55,19 +54,19 @@
       border-radius: 8px;
       cursor: pointer; 
       color: #94a3b8; 
-      font-size: 1rem; 
-      padding: 6px 8px;
+      font-size: 0.85rem; 
+      padding: 6px 10px;
       transition: all 0.2s; 
     }
     .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
     .icon-btn.active { color: #38bdf8; border-color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
 
     /* --- INPUT AREA --- */
-    .input-wrapper { position: relative; width: 100%; }
+    .input-wrapper { position: relative; width: 100%; display: flex; flex-direction: column; gap: 10px; }
     
     textarea { 
       width: 100%; 
-      height: 70px; 
+      height: 80px; 
       background: rgba(15, 23, 42, 0.6); 
       border: 1px solid rgba(255, 255, 255, 0.1); 
       color: #f8fafc; 
@@ -83,11 +82,26 @@
     textarea:focus { border-color: #8b5cf6; }
     textarea::placeholder { color: #64748b; }
 
+    /* --- MODE SELECTOR --- */
+    .mode-row { display: flex; align-items: center; gap: 8px; }
+    select {
+      flex: 1;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 0.85rem;
+      outline: none;
+      cursor: pointer;
+    }
+    select:focus { border-color: #38bdf8; }
+
     /* --- MIC BUTTON --- */
     #micBtn { 
       position: absolute; 
-      bottom: 12px; 
-      right: 12px; 
+      top: 10px; 
+      right: 10px; 
       background: none; 
       border: none; 
       cursor: pointer; 
@@ -106,11 +120,11 @@
     }
 
     /* --- ACTION BUTTONS --- */
-    .btn-row { display: flex; gap: 10px; margin-top: 12px; }
+    .btn-row { display: flex; gap: 10px; }
     
     .main-btn { 
       flex: 1; 
-      padding: 10px; 
+      padding: 12px; 
       background: linear-gradient(90deg, #6366f1, #8b5cf6); 
       border: none; 
       color: white; 
@@ -126,13 +140,13 @@
 
     .stop-btn { 
       flex: 0.4;
-      padding: 10px; 
+      padding: 12px; 
       background: rgba(239, 68, 68, 0.15); 
       border: 1px solid rgba(239, 68, 68, 0.5);
       color: #f87171; 
       border-radius: 10px; 
       cursor: pointer; 
-      display: none; /* Hidden by default */
+      display: none; 
       font-weight: 600;
       transition: 0.2s;
     }
@@ -142,9 +156,9 @@
     .status-card { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
     .status-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; }
     #output { 
-      font-size: 0.95rem; 
+      font-size: 0.9rem; 
       color: #e2e8f0; 
-      line-height: 1.5; 
+      line-height: 1.4; 
       white-space: pre-wrap;
     }
 
@@ -160,8 +174,6 @@
       border: 1px solid rgba(255,255,255,0.1);
       padding: 16px; 
       overflow-y: auto; 
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-      animation: slideDown 0.2s ease-out;
     }
     
     .history-item { 
@@ -170,16 +182,10 @@
       border-radius: 8px; 
       margin-bottom: 8px; 
       border: 1px solid rgba(255,255,255,0.05); 
-      font-size: 0.85rem; 
-      position: relative;
+      font-size: 0.8rem; 
+      cursor: pointer;
     }
-    .history-cmd { color: #e2e8f0; margin-right: 20px; }
-    .history-del-btn { 
-      position: absolute; right: 10px; top: 10px; 
-      color: #ef4444; background: none; border: none; 
-      cursor: pointer; font-size: 1.1rem; opacity: 0.6;
-    }
-    .history-del-btn:hover { opacity: 1; transform: scale(1.1); }
+    .history-item:hover { background: rgba(255,255,255,0.06); }
     
     .clear-all-btn {
       width: 100%; padding: 8px; margin-bottom: 12px;
@@ -190,46 +196,60 @@
     /* --- SCROLLBAR --- */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    ::-webkit-scrollbar-track { background: transparent; }
 
     @keyframes pulse { 
       0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 
       70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } 
       100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } 
     }
-    @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body>
   
   <div class="header">
-    <h2>✨ Gemini Omni</h2>
+    <h2>✨ Gemini Omni Agent</h2>
     <div class="icon-group">
-      <button class="icon-btn" id="historyBtn" title="View History">📂</button>
-      <button class="icon-btn active" id="voiceToggle" title="Toggle Voice">🎧</button>
+      <button class="icon-btn" id="historyBtn">📂 History</button>
+      <button class="icon-btn active" id="voiceToggle">🎧 Voice</button>
     </div>
   </div>
 
   <div class="card">
     <div class="input-wrapper">
-      <textarea id="userInput" placeholder="Ask me to browse, play music, or check pages..."></textarea>
-      <button id="micBtn" title="Speak Command">🎙️</button>
+      <textarea id="taskInput" placeholder="Enter your task..."></textarea>
+      <button id="micBtn">🎙️</button>
+      
+      <div class="mode-row">
+        <span style="font-size: 0.75rem; color: #94a3b8;">Mode:</span>
+        <select id="modeSelector">
+          <option value="">(Optional)</option>
+          <option value="execute">Execute</option>
+          <option value="read">Read</option>
+          <option value="scan">Scan</option>
+          <option value="write">Write</option>
+          <option value="search_execute">Search Execute</option>
+          <option value="coding">Coding</option>
+        </select>
+      </div>
     </div>
     
-    <div class="btn-row">
-      <button id="analyzeBtn" class="main-btn">🚀 Execute</button>
+    <div class="btn-row" style="margin-top: 12px;">
+      <button id="analyzeBtn" class="main-btn">🚀 Start Task</button>
       <button id="stopBtn" class="stop-btn">🛑 Stop</button>
     </div>
   </div>
 
   <div class="card status-card">
-    <div class="status-label">Agent Status</div>
-    <div id="output">Ready to assist.</div>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="status-label">Activity</div>
+        <div id="metaInfo" style="font-size:0.65rem; color:#64748b; display:flex; gap:8px;">
+            <span id="taskBadge" style="background:rgba(99,102,241,0.1); padding:2px 6px; border-radius:4px; border:1px solid rgba(99,102,241,0.2);">IDLE</span>
+        </div>
+    </div>
+    <div id="output">Waiting for instructions...</div>
   </div>
 
-  <div id="historyView">
-    <div style="text-align:center; color:#94a3b8; margin-top:20px;">Loading history...</div>
-  </div>
+  <div id="historyView"></div>
 
   <script src="sidepanel.js"></script>
 </body>

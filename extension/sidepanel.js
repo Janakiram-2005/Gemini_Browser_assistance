@@ -1,380 +1,326 @@
 // --- GLOBAL UI ELEMENTS ---
 const output = document.getElementById("output");
-const userInput = document.getElementById("userInput");
+const taskInput = document.getElementById("taskInput");
+const modeSelector = document.getElementById("modeSelector");
 const micBtn = document.getElementById("micBtn");
 const analyzeBtn = document.getElementById("analyzeBtn");
 const stopBtn = document.getElementById("stopBtn");
+const historyBtn = document.getElementById("historyBtn");
+const historyView = document.getElementById("historyView");
 
-let abortController = null;
-let isVoiceEnabled = true;
+// --- STATE VARIABLES ---
 let isRunning = false;
-let previousAction = "None";
-let previousParams = {};
-let previousPageSignature = "";
+let previousContext = "";
+let lastAction = "";
 let repeatCount = 0;
+let isVoiceEnabled = true;
 
-function makePageSignature(text) {
-    const normalized = (text || "").replace(/\s+/g, " ").trim();
-    return `${normalized.slice(0, 300)}::len=${normalized.length}`;
-}
+// --- 1. THE MAIN LOOP (STATE-AWARE EXECUTION ENGINE) ---
+async function runAgent(command) {
+    if (!command) return;
+    
+    // INITIALIZE BEFORE LOOP
+    isRunning = true;
+    previousContext = "";
+    lastAction = "";
+    repeatCount = 0;
 
-// --- 1. MAIN LOOP ---
-async function runAgentLoop(contextPrompt = null) {
-    const text = contextPrompt || userInput.value.trim();
-    if (!text) return;
+    updateUI("busy");
+    output.innerText = "Engine Initializing...";
 
-    if (!isRunning) {
-        isRunning = true;
-        previousAction = "None";
-        previousParams = {};
-        previousPageSignature = "";
-        repeatCount = 0;
-        updateUI("busy");
-        output.innerText = "Thinking...";
-    }
-
-    abortController = new AbortController();
-
-    try {
-        // A. CAPTURE STATE
-        const allTabs = await chrome.tabs.query({ currentWindow: true });
-        const tabList = allTabs.map(t => ({ id: t.id, title: t.title, url: t.url }));
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-        let pageText = "";
+    while (isRunning) {
         try {
-            const res = await chrome.scripting.executeScript({
+            // A. CAPTURE CURRENT PAGE
+            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!activeTab || !isRunning) break;
+
+            const scriptRes = await chrome.scripting.executeScript({
                 target: { tabId: activeTab.id },
                 func: () => document.body.innerText
             });
-            pageText = res[0]?.result || "";
-        } catch (e) { }
-        const currentPageSignature = makePageSignature(pageText);
+            const context = scriptRes[0]?.result || "";
 
-        // B. ASK BACKEND
-        const response = await fetch("http://127.0.0.1:5000/analyze", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                prompt: text,
-                tabs: tabList,
-                current_text: pageText.substring(0, 4000),
-                current_page_signature: currentPageSignature,
-                previous_page_signature: previousPageSignature,
-                last_action: previousAction,
-                last_params: previousParams,
+            // B. SEND REQUEST
+            const API_URL = "http://127.0.0.1:5000/agent";
+            const instruction = modeSelector.value || undefined;
+
+            const payload = {
+                command: command,
+                context: context,
+                previous_context: previousContext,
+                last_action: lastAction,
                 repeat_count: repeatCount
-            }),
-            signal: abortController.signal
-        });
+            };
+            if (instruction) payload.instruction = instruction;
 
-        const data = await response.json();
+            // STATE HEARTBEAT
+            console.log(`📡 SENDING STATE | lastAction: "${lastAction}" | repeatCount: ${repeatCount}`);
 
-        // C. EXECUTE ACTION
-        await executeAction(data);
-        const nextAction = data.action;
-        const nextParams = data.params || {};
-        const isSameAction = nextAction === previousAction;
-        const isSameParams = JSON.stringify(nextParams) === JSON.stringify(previousParams || {});
+            const response = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
 
-        repeatCount = (isSameAction && isSameParams) ? repeatCount + 1 : 0;
-        previousAction = nextAction;
-        previousParams = nextParams;
-        previousPageSignature = currentPageSignature;
+            if (response.status === 429) {
+                output.innerText = "⚠️ Rate Limit Hit. Backing off for 10s...";
+                await new Promise(r => setTimeout(r, 10000));
+                continue;
+            }
 
-        // D. LOOP DECISION
-        if (data.status === "in_progress" && isRunning) {
-            // Only overwrite status if it was generic
-            if (output.innerText === "Thinking...") output.innerText = "Working...";
-            setTimeout(() => runAgentLoop(text), 2000);
-        } else {
-            output.innerText = data.reply || "Task Completed ✅";
-            if (isVoiceEnabled && data.reply) speak(data.reply);
+            if (!response.ok) {
+                // HANDLE OTHER ERRORS
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.value || "Backend Unavailable");
+            }
+
+            const data = await response.json();
+
+            // C. ACTION VALIDATION (NORMALIZED)
+            const action = (data?.action || "").trim().toLowerCase();
+            const validActions = ["open_new_tab", "click", "type", "scroll", "close_tab", "switch_tab", "wait", "stop", "navigate", "chat"];
+            
+            if (!action || !validActions.includes(action)) {
+                console.log("Invalid action received:", action);
+                await new Promise(r => setTimeout(r, 2000));
+                continue;
+            }
+
+            // D. DEBUG LOGGING
+            console.log("ACTION:", action, "VALUE:", data.value, "SELECTOR:", data.selector);
+
+            if (!isRunning) break;
+
+            // E. LOOP DETECTION (use normalized 'action', not raw data.action)
+            if (action === lastAction) {
+                repeatCount++;
+            } else {
+                repeatCount = 0;
+            }
+
+            // G. EXECUTE ACTION (CRITICAL: DO BEFORE STOP CHECK)
+            await executeAction(data);
+
+            // H. STOP CONDITIONS
+            if (data.action === "stop" || data.is_goal_achieved === true || repeatCount >= 2) {
+                output.innerText = data.caption || data.value || "Task Complete ✅";
+                if (isVoiceEnabled) speak(output.innerText);
+                isRunning = false;
+                break;
+            }
+
+            // I. UPDATE STATE
+            previousContext = context;
+            lastAction = action;
+
+            // J. RATE LIMIT (MANDATORY - 3S)
+            await new Promise(r => setTimeout(r, 3000));
+
+        } catch (err) {
+            console.error("Execution Error:", err);
+            output.innerText = `Error: ${err.message}`;
             isRunning = false;
-            updateUI("idle");
+            break;
         }
-
-    } catch (err) {
-        if (err.name !== 'AbortError') output.innerText = "Error: " + err.message;
-        isRunning = false;
-        updateUI("idle");
     }
+    updateUI("idle");
 }
 
-// --- 2. ACTION EXECUTOR ---
+// --- 2. ACTION EXECUTION ---
 async function executeAction(data) {
-    if (data.thought) console.log("AI Thought:", data.thought);
+    // Use NORMALIZED action (trim + lowercase) for reliable matching
+    const action = (data?.action || "").trim().toLowerCase();
+    const { selector, value, caption } = data;
+    
+    output.innerText = caption || `Executing ${action}...`;
+    console.log("EXECUTING:", action, value); // VERIFICATION LOG
 
-    if (data.action === "click_element") {
-        output.innerText = `Clicking "${data.params.target_text}"...`;
-        await runGenericInteraction("click", data.params);
+    if (value && (value.startsWith("chrome://") || value.startsWith("chrome-extension://"))) {
+        console.log("Blocked restricted URL");
+        return;
     }
-    else if (data.action === "type_text") {
-        output.innerText = `Typing "${data.params.input_value}"...`;
-        await runGenericInteraction("type", data.params);
-    }
-    else if (data.action === "scroll") {
-        await runGenericInteraction("scroll", data.params);
-    }
-    else if (data.action === "open_url") {
-        output.innerText = `Opening ${data.params?.url || data.url}...`;
-        await chrome.tabs.create({ url: data.params?.url || data.url });
-    }
-    else if (data.action === "switch_tab") {
-        output.innerText = "Switching tab...";
-        await chrome.tabs.update(data.tab_id, { active: true });
-        if (data.script_task) await runSkillScript(data.tab_id, data.script_task, data.params);
-    }
-    else if (data.action === "chat") {
-        output.innerText = data.reply;
-        if (isVoiceEnabled) speak(data.reply);
-    }
-    else if (["youtube_search", "whatsapp_send"].includes(data.action)) {
-        output.innerText = `Running: ${data.action}`;
-        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (active) await runSkillScript(active.id, data.action, data.params);
-    }
-    else if (data.action === "close_tabs") {
-        output.innerText = "Closing tabs...";
-        if (data.tab_id) {
-            await chrome.tabs.remove(data.tab_id);
-        } else {
-            // Default: Close current active tab if no ID
-            const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (active) await chrome.tabs.remove(active.id);
+
+    try {
+        switch (action) {
+            case "open_new_tab":
+            case "navigate":
+                await chrome.tabs.create({ url: value });
+                break;
+
+            case "click":
+            case "type":
+            case "scroll":
+                await runInteractionScript(action, data);
+                break;
+
+            case "close_tab":
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (tab) await chrome.tabs.remove(tab.id);
+                break;
+
+            case "switch_tab":
+                window.focus();
+                break;
+
+            case "wait":
+                await new Promise(r => setTimeout(r, 1500));
+                break;
+
+            case "chat":
+                output.innerText = value || "Agent response received.";
+                if (isVoiceEnabled) speak(output.innerText);
+                break;
         }
+    } catch (e) {
+        console.error("Executor Failed:", e);
     }
 }
 
-// --- 3. GENERIC INTERACTION ---
-async function runGenericInteraction(type, params) {
+// --- 3. INTERACTION SCRIPT ---
+async function runInteractionScript(type, data) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.scripting.executeScript({
+    if (!tab) return;
+
+    await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        args: [type, params],
-        func: (action, p) => {
-            function findElementByText(text) {
-                if (!text) return null;
-                const xpath = `//*[contains(text(), '${text}')] | //input[@placeholder='${text}'] | //button[contains(@aria-label, '${text}')]`;
-                return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            }
-            if (action === "click") {
-                let el = p.selector ? document.querySelector(p.selector) : findElementByText(p.target_text);
-                if (el) {
-                    // Simulste full mouse event sequence for games/react apps
-                    ['mousedown', 'mouseup', 'click'].forEach(evtType => {
-                        const event = new MouseEvent(evtType, {
-                            bubbles: true,
-                            cancelable: true,
-                            view: window,
-                            buttons: 1
-                        });
-                        el.dispatchEvent(event);
-                    });
-                    el.focus();
+        args: [type, data],
+        func: (action, params) => {
+            function findEl() {
+                let el = document.querySelector(params.selector);
+                if (!el && params.value && (action === "click" || action === "type")) {
+                    const lowerVal = params.value.toLowerCase();
+                    const candidates = [...document.querySelectorAll("button, a, div, span, input, textarea")];
+                    el = candidates.find(e => (e.innerText || e.value || "").toLowerCase().includes(lowerVal));
                 }
+                if (!el && action === "type") el = document.querySelector("textarea, input, [contenteditable='true']");
+                return el;
             }
-            else if (action === "type") {
-                let el = p.selector ? document.querySelector(p.selector) : findElementByText(p.target_text);
-                if (!el) el = document.querySelector('input[type="text"], input[type="search"]');
-                if (el) {
-                    el.value = p.input_value;
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.focus();
+
+            const el = findEl();
+            if (!el && action !== "scroll") return;
+
+            try {
+                switch (action) {
+                    case "click":
+                        el.click();
+                        break;
+                    case "type":
+                        el.focus();
+                        if (el.value !== undefined) el.value = "";
+                        el.innerText = "";
+                        
+                        if (el.classList && el.classList.contains('CodeMirror')) {
+                            el.CodeMirror.setValue(""); 
+                            el.CodeMirror.setValue(params.value);
+                        } else if (el.contentEditable === "true") {
+                            el.innerText = params.value;
+                        } else {
+                            el.value = params.value;
+                        }
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        break;
+                    case "scroll":
+                        window.scrollBy(0, 500);
+                        break;
                 }
-            }
-            else if (action === "scroll") {
-                window.scrollBy({ top: 500, behavior: 'smooth' });
-            }
+            } catch (e) {}
         }
     });
 }
 
-// --- 4. SKILLS (FIXED YOUTUBE CLICKER) ---
-async function runSkillScript(tabId, skill, params) {
-    if (skill === "youtube_search") {
-        chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            args: [params.query],
-            func: (q) => {
-                const input = document.querySelector('input#search') || document.querySelector('[name="search_query"]');
-                const btn = document.querySelector('button#search-icon-legacy') || document.querySelector('[aria-label="Search"]');
-
-                if (input && btn) {
-                    input.value = q;
-                    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
-                    btn.click();
-
-                    // --- NEW ROBUST CLICKER ---
-                    let attempts = 0;
-                    const finder = setInterval(() => {
-                        attempts++;
-                        // Try finding the main title link (ignores shorts shelf often)
-                        const video = document.querySelector('a#video-title');
-                        if (video && video.href.includes('watch')) {
-                            clearInterval(finder);
-                            video.click(); // CLICK IT!
-                        } else if (attempts > 15) { // Stop after 7.5 seconds
-                            clearInterval(finder);
-                            alert("Gemini: I searched, but couldn't auto-click the video. Please click it.");
-                        }
-                    }, 500); // Check every 500ms
-                }
-            }
-        });
-    }
-    else if (skill === "whatsapp_send") {
-        chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            args: [params.contact, params.message],
-            func: (c, m) => {
-                const box = document.querySelector('div[contenteditable="true"][data-tab="3"]');
-                if (box) {
-                    box.innerHTML = c;
-                    box.dispatchEvent(new InputEvent('input', { bubbles: true }));
-                    setTimeout(() => box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })), 500);
-                }
-            }
-        });
-    }
+// --- 4. VOICE FIX ---
+function normalizeCommand(text) {
+    return text.toLowerCase()
+        .replace("lead code", "leetcode")
+        .replace("open mail", "open gmail")
+        .replace("sign out", "logout")
+        .trim();
 }
 
-// --- 5. UI SETUP ---
-function updateUI(state) {
-    analyzeBtn.style.display = state === "busy" ? "none" : "block";
-    stopBtn.style.display = state === "busy" ? "block" : "none";
-}
-function speak(text) {
+function speak(t) {
     if (!isVoiceEnabled) return;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+    const synth = window.speechSynthesis;
+    const utterance = new SpeechSynthesisUtterance(t);
+    const voices = synth.getVoices();
+    utterance.voice = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) || voices[0];
+    synth.cancel();
+    synth.speak(utterance);
 }
 
-analyzeBtn.addEventListener("click", () => runAgentLoop());
-stopBtn.addEventListener("click", () => { if (abortController) abortController.abort(); isRunning = false; });
-userInput.addEventListener("keypress", (e) => { if (e.key === "Enter") runAgentLoop(); });
-
-// --- VOICE INPUT SETUP ---
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
-
-if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-
-    recognition.onstart = () => {
-        micBtn.classList.add("listening");
-        micBtn.innerText = "🔴";
-        output.innerText = "Listening...";
-    };
-
-    recognition.onend = () => {
-        micBtn.classList.remove("listening");
-        micBtn.innerText = "🎙️";
-        if (output.innerText === "Listening...") output.innerText = "Ready.";
-    };
-
-    recognition.onresult = (e) => {
-        const transcript = e.results[0][0].transcript;
-        userInput.value = transcript;
-        output.innerText = `Heard: "${transcript}"`;
-        setTimeout(() => runAgentLoop(), 500); // Auto-submit
-    };
-
-    recognition.onerror = (e) => {
-        console.error("Speech Error:", e.error);
-        micBtn.classList.remove("listening");
-        micBtn.innerText = "🎙️";
-        output.innerText = "Mic Error: " + e.error;
-    };
-} else {
-    micBtn.style.display = "none";
-    console.warn("Web Speech API not supported.");
+// --- 5. UI & EVENTS ---
+function updateUI(state) {
+    const isBusy = state === "busy";
+    analyzeBtn.style.display = isBusy ? "none" : "block";
+    stopBtn.style.display = isBusy ? "block" : "none";
+    document.getElementById("taskBadge").innerText = isBusy ? "EXECUTING" : "IDLE";
 }
 
-micBtn.addEventListener("click", () => {
-    if (!recognition) return alert("Voice input not supported in this browser.");
-    try { recognition.start(); } catch (e) { recognition.stop(); }
+function unlockAudio() {
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+}
+
+analyzeBtn.addEventListener("click", () => { unlockAudio(); runAgent(taskInput.value.trim()); });
+stopBtn.addEventListener("click", () => { isRunning = false; updateUI("idle"); output.innerText = "Stopped."; });
+
+taskInput.addEventListener("keypress", (e) => { 
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        unlockAudio();
+        runAgent(taskInput.value.trim());
+    }
 });
 
-const voiceBtn = document.getElementById("voiceToggle");
-const historyBtn = document.getElementById("historyBtn");
-const historyView = document.getElementById("historyView");
+micBtn.addEventListener("click", async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+    } catch (err) {}
 
-voiceBtn.addEventListener("click", () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.continuous = true; 
+    recognition.interimResults = true; 
+    
+    micBtn.classList.add("listening");
+    
+    recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript;
+        const normalized = normalizeCommand(transcript);
+        taskInput.value = normalized;
+        if (event.results[event.results.length - 1].isFinal) {
+            unlockAudio();
+            runAgent(normalized);
+        }
+    };
+    recognition.onend = () => micBtn.classList.remove("listening");
+    recognition.start();
+});
+
+document.getElementById("voiceToggle").addEventListener("click", (e) => {
     isVoiceEnabled = !isVoiceEnabled;
-    voiceBtn.classList.toggle('active', isVoiceEnabled);
-    voiceBtn.innerText = isVoiceEnabled ? "🎧" : "🔇";
+    e.target.classList.toggle('active', isVoiceEnabled);
+    e.target.innerText = isVoiceEnabled ? "🎧 Voice" : "🔇 Muted";
+    if (isVoiceEnabled) { unlockAudio(); speak("Voice enabled"); }
 });
 
 historyBtn.addEventListener("click", () => {
-    const isHidden = historyView.style.display === "none" || historyView.style.display === "";
-    historyView.style.display = isHidden ? "block" : "none";
-    historyBtn.classList.toggle('active', isHidden);
-    if (isHidden) loadHistory();
+    const isVisible = historyView.style.display === "block";
+    historyView.style.display = isVisible ? "none" : "block";
+    if (!isVisible) {
+        fetch("http://127.0.0.1:5000/history")
+            .then(res => res.json())
+            .then(data => {
+                historyView.innerHTML = "";
+                data.forEach(item => {
+                    const div = document.createElement("div");
+                    div.className = "history-item";
+                    div.innerText = item.command;
+                    div.onclick = () => { taskInput.value = item.command; historyView.style.display = "none"; };
+                    historyView.appendChild(div);
+                });
+            });
+    }
 });
-
-async function loadHistory() {
-    historyView.innerHTML = `<div style="text-align:center;color:#94a3b8;margin-top:20px;">Loading...</div>`;
-    try {
-        const res = await fetch("http://127.0.0.1:5000/history");
-        if (!res.ok) throw new Error("Failed to load");
-        const logs = await res.json();
-
-        if (logs.length === 0) {
-            historyView.innerHTML = `
-                <div style="text-align:center;color:#64748b;margin-top:20px;">No history yet.</div>
-                <button id="closeHistoryBtn" class="clear-all-btn" style="margin-top:10px;">Close</button>
-            `;
-            document.getElementById("closeHistoryBtn").addEventListener("click", () => {
-                historyView.style.display = 'none';
-                historyBtn.classList.remove('active');
-            });
-            return;
-        }
-
-        historyView.innerHTML = `
-            <button id="clearAllBtn" class="clear-all-btn">🗑️ Clear All History</button>
-            ${logs.map(l => `
-                <div class="history-item">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-                        <span style="font-size:0.75rem;color:#94a3b8;">${l.time}</span>
-                        <span class="history-status" style="font-size:0.7rem;color:${l.status === 'Success' ? '#4ade80' : '#f87171'}">${l.status}</span>
-                    </div>
-                    <div class="history-cmd">${l.command}</div>
-                    <button class="history-del-btn" data-id="${l._id}">×</button>
-                </div>
-            `).join('')}
-            <button id="closeHistoryBtn" class="clear-all-btn" style="margin-top:10px;border-color:#64748b;color:#94a3b8;">Close</button>
-        `;
-
-        // Attach Event Listeners
-        document.getElementById("clearAllBtn").addEventListener("click", clearHistory);
-        document.getElementById("closeHistoryBtn").addEventListener("click", () => {
-            historyView.style.display = 'none';
-            historyBtn.classList.remove('active');
-        });
-
-        document.querySelectorAll('.history-del-btn').forEach(b => {
-            b.addEventListener('click', async (e) => {
-                const id = e.target.getAttribute('data-id');
-                if (id) {
-                    await fetch(`http://127.0.0.1:5000/history/${id}`, { method: 'DELETE' });
-                    loadHistory();
-                }
-            });
-        });
-
-    } catch (e) {
-        historyView.innerHTML = `<div style="color:#ef4444;text-align:center;margin-top:20px;">Error loading history.<br>${e.message}</div>`;
-    }
-}
-
-async function clearHistory() {
-    if (confirm("Clear all history?")) {
-        await fetch("http://127.0.0.1:5000/history", { method: 'DELETE' });
-        loadHistory();
-    }
-}
