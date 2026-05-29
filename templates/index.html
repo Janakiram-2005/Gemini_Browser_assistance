@@ -1,265 +1,484 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
-    <title>Gemini Agent Pro</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>AI Agent Pro · Local & Cloud LLM</title>
+  <meta name="description" content="Autonomous browser AI powered by Gemma2, Qwen2.5 (offline) and Cloud Gemini.">
+  <link rel="icon" href="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
 
-    <link rel="icon" href="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" type="image/svg+xml">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <style>
+    /* ── TOKENS ──────────────────────────────────────────── */
+    :root{
+      --p:#8b5cf6; --p-glow:rgba(139,92,246,.38); --p-dim:rgba(139,92,246,.12);
+      --s:#06b6d4;
+      --local:#34d399; --local-dim:rgba(52,211,153,.12); --local-border:rgba(52,211,153,.35);
+      --cloud:#60a5fa; --cloud-dim:rgba(96,165,250,.12);  --cloud-border:rgba(96,165,250,.35);
+      --danger:#ef4444; --success:#10b981;
+      --tx:#f8fafc; --tx2:#94a3b8; --tx3:#475569;
+      --glass:rgba(15,23,42,.7); --gb:rgba(255,255,255,.09);
+      --inp:rgba(20,30,55,.7);
+      --sh:0 28px 70px -14px rgba(0,0,0,.65);
+      --r:18px; --rm:12px; --rs:8px;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;font-family:"Segoe UI",system-ui,sans-serif;color:var(--tx);background:#020617;overflow:hidden}
 
-    <style>
-        /* ---------- CORE VARIABLES ---------- */
-        :root{
-            --primary: #8b5cf6;
-            --primary-glow: rgba(139,92,246,0.45);
-            --secondary: #06b6d4;
-            --danger: #ef4444;
-            --success: #10b981;
-            --text-main: #f8fafc;
-            --text-sub: #94a3b8;
-            --glass-bg: rgba(15,23,42,0.62);
-            --glass-border: rgba(255,255,255,0.12);
-            --card-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
-            --input-bg: rgba(30,41,59,0.6);
-            --max-ui-width: 800px;
-        }
+    /* animated mesh bg */
+    body::before{
+      content:'';position:fixed;inset:-18%;z-index:-2;
+      background:
+        radial-gradient(32% 32% at 12% 12%,rgba(139,92,246,.22) 0%,transparent 50%),
+        radial-gradient(38% 38% at 88% 18%,rgba(6,182,212,.18) 0%,transparent 55%),
+        radial-gradient(42% 42% at 50% 88%,rgba(79,70,229,.16) 0%,transparent 60%),
+        radial-gradient(28% 28% at 78% 78%,rgba(52,211,153,.10) 0%,transparent 50%);
+      filter:blur(75px);animation:spin 32s linear infinite;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
 
-        /* ---------- BASE LAYOUT ---------- */
-        html,body{
-            height:100%;
-            margin:0;
-            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-            color:var(--text-main);
-            background:#020617;
-            overflow: hidden;
-        }
+    /* floating particles */
+    body::after{
+      content:'';position:fixed;inset:0;z-index:-1;
+      background-image:radial-gradient(1px 1px at 20% 30%,rgba(255,255,255,.15) 0%,transparent 0%),
+        radial-gradient(1px 1px at 60% 70%,rgba(255,255,255,.10) 0%,transparent 0%),
+        radial-gradient(1px 1px at 80% 20%,rgba(255,255,255,.12) 0%,transparent 0%);
+      animation:twinkle 6s ease-in-out infinite alternate;
+    }
+    @keyframes twinkle{0%{opacity:.4}100%{opacity:1}}
 
-        /* ---------- DYNAMIC BACKGROUND ---------- */
-        body::before{
-            content:'';
-            position:fixed; inset:-12%;
-            z-index:-3;
-            background-image:
-                radial-gradient(30% 30% at 10% 10%, rgba(139,92,246,0.22) 0%, transparent 45%),
-                radial-gradient(35% 35% at 90% 20%, rgba(6,182,212,0.18) 0%, transparent 50%),
-                radial-gradient(40% 40% at 50% 85%, rgba(79,70,229,0.16) 0%, transparent 55%);
-            filter: blur(60px);
-            animation: rotateGlow 28s linear infinite;
-        }
-        @keyframes rotateGlow{ 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+    /* ── WRAP ───────────────────────────────────────────── */
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 
-        /* ---------- MAIN CONTAINER ---------- */
-        .app-wrap{
-            min-height:100vh;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            padding:20px;
-            box-sizing:border-box;
-        }
+    .card{
+      width:100%;max-width:900px;
+      border-radius:var(--r);padding:30px 34px;
+      background:var(--glass);border:1px solid var(--gb);
+      box-shadow:var(--sh);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+    }
 
-        .glass-card{
-            width:100%;
-            max-width:var(--max-ui-width);
-            border-radius:20px;
-            padding:32px;
-            background:var(--glass-bg);
-            border:1px solid var(--glass-border);
-            box-shadow:var(--card-shadow);
-            text-align:center;
-            backdrop-filter: blur(20px);
-        }
+    /* ── HEADER ─────────────────────────────────────────── */
+    .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
+    .hdr-left{display:flex;align-items:center;gap:14px}
+    .logo{width:44px;height:44px;animation:float 5s ease-in-out infinite}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+    h1{font-size:2rem;line-height:1}
+    .grad{background:linear-gradient(135deg,var(--p) 0%,var(--s) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800}
+    .tagline{font-size:.72rem;color:var(--tx2);margin-top:4px;display:flex;align-items:center;gap:6px}
+    .tagline-dot{width:5px;height:5px;border-radius:50%;background:var(--local);animation:blink 2s ease-in-out infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
-        /* ---------- HEADER ---------- */
-        h1{
-            margin:0 0 16px 0;
-            font-size:2.2rem;
-            display:flex; align-items:center; justify-content:center; gap:12px;
-        }
-        .logo-text{
-            background:linear-gradient(135deg,var(--primary) 0%,var(--secondary) 100%);
-            -webkit-background-clip:text; -webkit-text-fill-color:transparent; font-weight:800;
-        }
-        .gemini-logo{ width:42px; height:42px; animation: float 6s ease-in-out infinite; }
-        @keyframes float{ 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+    /* active pill */
+    .active-pill{
+      display:flex;align-items:center;gap:7px;
+      font-size:.75rem;font-weight:700;
+      padding:6px 14px;border-radius:99px;
+      background:var(--local-dim);border:1px solid var(--local-border);color:var(--local);
+      transition:all .4s ease;cursor:default;
+    }
+    .active-pill.cloud{background:var(--cloud-dim);border-color:var(--cloud-border);color:var(--cloud)}
+    .active-pill i{font-size:.8rem}
 
-        /* ---------- INPUT GROUP ---------- */
-        .input-group{
-            display:flex; align-items:center; gap:10px;
-            background:var(--input-bg);
-            border-radius:14px; padding:8px; margin-top:20px;
-            border:1px solid var(--glass-border);
-        }
-        .icon-btn{ padding:10px; border-radius:10px; cursor:pointer; color:var(--text-sub); display:flex; align-items:center; justify-content:center; }
-        .icon-btn:hover { color: white; background: rgba(255,255,255,0.05); }
-        input[type="text"]{
-            border:0; outline:0; flex:1; font-size:1rem; background:transparent; color:var(--text-main); padding:10px;
-        }
+    /* ── MODEL TOGGLE SECTION ───────────────────────────── */
+    .model-section{margin-bottom:20px}
+    .section-label{
+      font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;
+      color:var(--tx2);margin-bottom:10px;display:flex;align-items:center;gap:8px;
+    }
+    .section-label::after{content:'';flex:1;height:1px;background:var(--gb)}
 
-        /* ---------- CONTROLS ---------- */
-        .controls-row{ display:flex; gap:12px; align-items:center; justify-content:center; margin-top:20px; flex-wrap:wrap; }
-        select{ background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main); padding:8px 12px; border-radius:10px; font-size:0.9rem; outline: none; }
-        
-        .switch-container{ display:flex; align-items:center; gap:8px; background:var(--glass-bg); padding:8px 12px; border-radius:10px; border:1px solid var(--glass-border); color:var(--text-sub); font-size:0.9rem; }
+    .model-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 
-        .switch{ position:relative; display:inline-block; width:34px; height:20px; }
-        .switch input{ opacity:0; width:0; height:0; }
-        .slider{ position:absolute; inset:0; background:#64748b; border-radius:34px; transition:.25s; }
-        .slider:before{ content:''; position:absolute; left:2px; bottom:2px; width:16px; height:16px; background:#fff; border-radius:50%; transition:.25s; }
-        input:checked + .slider{ background:var(--success); }
-        input:checked + .slider:before{ transform:translateX(14px); }
+    .mcard{
+      border-radius:var(--rm);padding:14px;
+      border:2px solid transparent;
+      background:rgba(255,255,255,.03);
+      cursor:pointer;transition:all .25s ease;position:relative;overflow:hidden;
+    }
+    .mcard::after{
+      content:'';position:absolute;inset:0;border-radius:inherit;
+      background:inherit;opacity:0;transition:opacity .25s;
+    }
+    .mcard:hover{transform:translateY(-3px)}
+    .mcard:hover::after{opacity:1}
+    .mcard.local:hover{background:var(--local-dim)}
+    .mcard.cloud:hover{background:var(--cloud-dim)}
 
-        /* ---------- STATUS & STOP ---------- */
-        .status-text{ font-size:1rem; font-weight:600; color:var(--primary); margin-top:16px; }
-        .stop-pill{
-            display:inline-block; margin-top:16px; background: rgba(239,68,68,0.1); color:var(--danger); border:1px solid var(--danger); padding:10px 24px; border-radius:999px; font-weight:700; cursor:pointer; font-size:0.9rem;
-        }
+    .mcard.active.local{border-color:var(--local);box-shadow:0 0 22px rgba(52,211,153,.3),inset 0 0 20px rgba(52,211,153,.05)}
+    .mcard.active.cloud{border-color:var(--cloud);box-shadow:0 0 22px rgba(96,165,250,.3),inset 0 0 20px rgba(96,165,250,.05)}
 
-        /* ---------- LIVE CONSOLE ---------- */
-        .console-area{
-            margin-top:24px; background:rgba(0,0,0,0.3); border-radius:14px; border:1px solid var(--glass-border); padding:16px; font-family:monospace; font-size:0.8rem; max-height:220px; overflow-y:auto; text-align:left;
-        }
-        .console-header{ color:var(--primary); font-weight:bold; margin-bottom:8px; display:flex; justify-content:space-between; }
-        .log-entry{ margin-bottom:4px; display:flex; gap:8px; }
-        .log-time{ color:var(--text-sub); opacity:0.6; }
+    .mcard.disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
 
-        /* ---------- MOBILE ---------- */
-        @media (max-width: 640px){
-            .glass-card{ padding:20px; }
-            h1{ font-size:1.7rem; }
-            .controls-row{ flex-direction: column; align-items: stretch; }
-            select, .switch-container{ width: 100%; box-sizing: border-box; }
-        }
-    </style>
+    .mcard-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .mcard-icon{font-size:1.6rem;line-height:1}
+    .mbadge{
+      font-size:.58rem;font-weight:800;letter-spacing:.06em;
+      padding:2px 8px;border-radius:99px;
+    }
+    .mbadge.local{background:var(--local-dim);color:var(--local);border:1px solid var(--local-border)}
+    .mbadge.cloud{background:var(--cloud-dim);color:var(--cloud);border:1px solid var(--cloud-border)}
+
+    .mcard-name{font-size:.9rem;font-weight:700;margin-bottom:2px}
+    .mcard-sub{font-size:.7rem;color:var(--tx2);line-height:1.4}
+    .mcard-status{display:flex;align-items:center;gap:5px;margin-top:8px;font-size:.68rem;color:var(--tx2)}
+    .sdot{width:6px;height:6px;border-radius:50%;background:var(--tx3);flex-shrink:0}
+    .sdot.on{background:var(--local);box-shadow:0 0 6px var(--local);animation:blink 2s ease-in-out infinite}
+    .sdot.off{background:var(--danger)}
+
+    /* selected checkmark */
+    .mcard .check{
+      position:absolute;top:10px;right:10px;
+      width:20px;height:20px;border-radius:50%;
+      display:flex;align-items:center;justify-content:center;
+      background:var(--local);color:#000;font-size:.6rem;font-weight:900;
+      opacity:0;transform:scale(.4);transition:all .2s;
+    }
+    .mcard.active.local .check{opacity:1;transform:scale(1)}
+    .mcard.active.cloud .check{opacity:1;transform:scale(1);background:var(--cloud)}
+
+    /* shimmer skeleton */
+    .shimmer{
+      border-radius:var(--rm);height:100px;
+      background:linear-gradient(90deg,rgba(255,255,255,.04) 25%,rgba(255,255,255,.09) 50%,rgba(255,255,255,.04) 75%);
+      background-size:200% 100%;animation:sh 1.6s infinite;
+    }
+    @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+    /* ── INPUT ROW ──────────────────────────────────────── */
+    .inp-row{
+      display:flex;align-items:center;gap:8px;
+      background:var(--inp);border-radius:var(--rm);padding:6px 8px;
+      border:1px solid var(--gb);transition:border-color .2s,box-shadow .2s;
+    }
+    .inp-row:focus-within{border-color:var(--p);box-shadow:0 0 0 3px var(--p-glow)}
+    .iibtn{
+      padding:10px;border-radius:9px;cursor:pointer;
+      color:var(--tx2);display:flex;align-items:center;justify-content:center;
+      border:none;background:transparent;font-size:1rem;transition:all .2s;
+    }
+    .iibtn:hover{color:#fff;background:rgba(255,255,255,.07)}
+    .iibtn.rec{color:var(--danger);animation:blink 1s infinite}
+    input[type=text]{
+      flex:1;border:0;outline:0;font-size:1rem;
+      background:transparent;color:var(--tx);padding:10px 4px;
+    }
+    input::placeholder{color:var(--tx3)}
+    .send-btn{
+      background:linear-gradient(135deg,var(--p),var(--s));
+      border:none;border-radius:9px;color:#fff;
+      padding:10px 18px;cursor:pointer;font-weight:700;font-size:.9rem;
+      display:flex;align-items:center;gap:7px;transition:all .2s;white-space:nowrap;
+    }
+    .send-btn:hover{transform:scale(1.04);box-shadow:0 4px 20px var(--p-glow)}
+    .send-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+    /* ── CONTROLS ───────────────────────────────────────── */
+    .ctrl-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+    .chip{
+      display:flex;align-items:center;gap:8px;
+      background:rgba(255,255,255,.04);border:1px solid var(--gb);
+      padding:7px 12px;border-radius:9px;color:var(--tx2);font-size:.82rem;cursor:default;
+    }
+    select{
+      background:rgba(20,30,55,.8);border:1px solid var(--gb);
+      color:var(--tx);padding:7px 12px;border-radius:9px;font-size:.82rem;
+      outline:none;cursor:pointer;transition:border-color .2s;
+    }
+    select:focus{border-color:var(--p)}
+    .sw{position:relative;display:inline-block;width:34px;height:20px;flex-shrink:0}
+    .sw input{opacity:0;width:0;height:0}
+    .slider{position:absolute;inset:0;background:#334155;border-radius:34px;transition:.25s;cursor:pointer}
+    .slider::before{content:'';position:absolute;left:2px;bottom:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.25s}
+    input:checked+.slider{background:var(--success)}
+    input:checked+.slider::before{transform:translateX(14px)}
+
+    /* ── STATUS ROW ─────────────────────────────────────── */
+    .status-row{display:flex;align-items:center;justify-content:space-between;margin-top:16px;flex-wrap:wrap;gap:8px}
+    #statusTxt{font-size:.95rem;font-weight:600;color:var(--p);display:flex;align-items:center;gap:8px}
+    .spin-icon{display:none;animation:rotate .7s linear infinite}
+    @keyframes rotate{to{transform:rotate(360deg)}}
+    .stop-btn{
+      display:none;background:rgba(239,68,68,.12);color:var(--danger);
+      border:1px solid var(--danger);padding:8px 20px;border-radius:99px;
+      font-weight:700;cursor:pointer;font-size:.85rem;transition:all .2s;
+    }
+    .stop-btn:hover{background:rgba(239,68,68,.25)}
+
+    /* ── CONSOLE ────────────────────────────────────────── */
+    .console{
+      margin-top:18px;background:rgba(0,0,0,.38);border-radius:var(--rm);
+      border:1px solid var(--gb);padding:14px 16px;
+      font-family:'Cascadia Code','Fira Code',monospace;font-size:.76rem;
+      max-height:190px;overflow-y:auto;text-align:left;
+    }
+    .console-hdr{
+      color:var(--p);font-weight:700;margin-bottom:10px;
+      display:flex;justify-content:space-between;align-items:center;
+    }
+    .live-dot{
+      width:6px;height:6px;border-radius:50%;
+      background:var(--success);display:inline-block;margin-left:6px;
+      animation:blink 1.5s ease-in-out infinite;
+    }
+    .le{margin-bottom:3px;display:flex;gap:8px;line-height:1.55}
+    .lt{color:var(--tx2);opacity:.5;white-space:nowrap;flex-shrink:0}
+    .lm-info{color:#c4b5fd}
+    .lm-act{color:var(--s)}
+    .lm-llm{color:var(--local)}
+    .lm-err{color:var(--danger)}
+    .lm-crit{color:var(--danger);font-weight:700}
+
+    /* ── MOBILE ─────────────────────────────────────────── */
+    @media(max-width:680px){
+      .card{padding:18px}
+      h1{font-size:1.55rem}
+      .model-grid{grid-template-columns:1fr 1fr}
+      .ctrl-row{flex-direction:column;align-items:stretch}
+      .chip,select{width:100%}
+      .hdr{flex-direction:column;align-items:flex-start}
+    }
+    @media(max-width:420px){.model-grid{grid-template-columns:1fr}}
+
+    /* scrollbar */
+    ::-webkit-scrollbar{width:5px}
+    ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
+  </style>
 </head>
 <body>
-    <div class="app-wrap">
-        <div class="glass-card">
-            <h1>
-                <img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" class="gemini-logo" alt="logo">
-                Gemini<span class="logo-text">Agent Pro</span>
-            </h1>
+<div class="wrap">
+<div class="card">
 
-            <div class="input-group">
-                <div class="icon-btn" onclick="toggleVoice()"><i class="fas fa-microphone"></i></div>
-                <input type="text" id="userInput" placeholder="Ask me to explore the web..." autocomplete="off">
-                <div class="icon-btn" onclick="sendTask()"><i class="fas fa-paper-plane"></i></div>
-            </div>
-
-            <div class="controls-row">
-                <select id="langSelect">
-                    <option value="en-US">English</option>
-                    <option value="te-IN">Telugu (తెలుగు)</option>
-                    <option value="hi-IN">Hindi (हिंदी)</option>
-                </select>
-
-                <div class="switch-container">
-                    <label class="switch">
-                        <input type="checkbox" id="visionToggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                    <span>Vision Mode</span>
-                </div>
-
-                <div class="switch-container">
-                    <label class="switch">
-                        <input type="checkbox" id="voiceToggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                    <span>Voice Response</span>
-                </div>
-            </div>
-
-            <div id="statusText" class="status-text">Ready to assist.</div>
-            <button class="stop-pill" id="stopBtn" onclick="stopTask()" style="display:none;">🛑 STOP AGENT</button>
-
-            <!-- LIVE CONSOLE AREA -->
-            <div class="console-area" id="liveConsole">
-                <div class="console-header">
-                    <span>📟 Live Backend Console</span>
-                    <span style="font-size:0.6rem; opacity:0.5;">REAL-TIME</span>
-                </div>
-                <div id="consoleLogs">
-                    <div style="opacity:0.4;">Waiting for backend activity...</div>
-                </div>
-            </div>
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-left">
+      <img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" class="logo" alt="logo">
+      <div>
+        <h1>AI <span class="grad">Agent Pro</span></h1>
+        <div class="tagline">
+          <span class="tagline-dot"></span>
+          Local &amp; Cloud LLMs · Autonomous Browser Agent
         </div>
+      </div>
     </div>
+    <div class="active-pill" id="activePill">
+      <i class="fas fa-microchip"></i>
+      <span id="pillTxt">Loading…</span>
+    </div>
+  </div>
 
-    <script>
-        const input = document.getElementById('userInput');
-        const statusText = document.getElementById('statusText');
-        const stopBtn = document.getElementById('stopBtn');
-        const consoleLogs = document.getElementById('consoleLogs');
+  <!-- MODEL SELECTOR -->
+  <div class="model-section">
+    <div class="section-label"><i class="fas fa-brain"></i> Choose AI Brain</div>
+    <div class="model-grid" id="modelGrid">
+      <div class="shimmer"></div>
+      <div class="shimmer"></div>
+      <div class="shimmer"></div>
+    </div>
+  </div>
 
-        async function sendTask() {
-            const cmd = input.value.trim();
-            if(!cmd) return;
-            
-            statusText.innerText = "Processing Command...";
-            stopBtn.style.display = 'inline-block';
-            
-            // Note: Since we are using the extension for real browser tasks,
-            // this web UI mostly acts as a dashboard or secondary input.
-            // For now, it sends to the /agent endpoint.
-            try {
-                const res = await fetch('/agent', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        command: cmd,
-                        context: "Web UI Request",
-                        repeat_count: 0
-                    })
-                });
-                const data = await res.json();
-                statusText.innerText = "Task Received.";
-                if(data.value) speak(data.value);
-            } catch(e) {
-                statusText.innerText = "Connection Error.";
-            }
-        }
+  <!-- INPUT -->
+  <div class="inp-row">
+    <button class="iibtn" id="micBtn" onclick="toggleMic()" title="Voice Input">
+      <i class="fas fa-microphone"></i>
+    </button>
+    <input type="text" id="userInput" placeholder="Ask me to browse the web, fill forms, code…"
+      autocomplete="off" onkeydown="if(event.key==='Enter')sendTask()">
+    <button class="send-btn" id="sendBtn" onclick="sendTask()">
+      <i class="fas fa-paper-plane"></i> Send
+    </button>
+  </div>
 
-        function stopTask() {
-            stopBtn.style.display = 'none';
-            statusText.innerText = "Agent Stopped.";
-        }
+  <!-- CONTROLS -->
+  <div class="ctrl-row">
+    <select id="langSel" title="Voice language">
+      <option value="en-US">🌐 English</option>
+      <option value="te-IN">🇮🇳 Telugu</option>
+      <option value="hi-IN">🇮🇳 Hindi</option>
+      <option value="ta-IN">🇮🇳 Tamil</option>
+    </select>
+    <div class="chip">
+      <label class="sw"><input type="checkbox" id="visionTog" checked><span class="slider"></span></label>
+      <i class="fas fa-eye"></i> Vision
+    </div>
+    <div class="chip">
+      <label class="sw"><input type="checkbox" id="voiceTog" checked><span class="slider"></span></label>
+      <i class="fas fa-volume-up"></i> Voice Out
+    </div>
+  </div>
 
-        function toggleVoice() {
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if(!SR) return alert("Voice not supported.");
-            const r = new SR();
-            r.onresult = (e) => { input.value = e.results[0][0].transcript; sendTask(); };
-            r.start();
-        }
+  <!-- STATUS -->
+  <div class="status-row">
+    <div id="statusTxt">
+      <i class="fas fa-circle-notch spin-icon" id="spinIcon"></i>
+      Ready to assist.
+    </div>
+    <button class="stop-btn" id="stopBtn" onclick="stopTask()">🛑 STOP AGENT</button>
+  </div>
 
-        function speak(text) {
-            if(!document.getElementById('voiceToggle').checked) return;
-            window.speechSynthesis.cancel();
-            window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-        }
+  <!-- CONSOLE -->
+  <div class="console" id="console">
+    <div class="console-hdr">
+      <span>📟 Live Console <span class="live-dot"></span></span>
+      <span style="font-size:.58rem;opacity:.35;">REAL-TIME</span>
+    </div>
+    <div id="logLines"><div style="opacity:.3">Waiting for activity…</div></div>
+  </div>
 
-        async function fetchLogs() {
-            try {
-                const res = await fetch('/api/logs');
-                const logs = await res.json();
-                if(!logs.length) return;
-                
-                consoleLogs.innerHTML = logs.map(l => `
-                    <div class="log-entry">
-                        <span class="log-time">[${l.time}]</span>
-                        <span style="color:#e2e8f0">${l.msg}</span>
-                    </div>
-                `).join('');
-                
-                const div = document.getElementById('liveConsole');
-                div.scrollTop = div.scrollHeight;
-            } catch(e) {}
-        }
+</div>
+</div>
 
-        setInterval(fetchLogs, 2000);
-    </script>
+<script>
+// ── STATE ──────────────────────────────────────────────────
+let sel  = 'gemma2';
+let mods = [];
+let rec  = null;
+
+// ── MODEL META ─────────────────────────────────────────────
+const META = {
+  'gemma2':      {icon:'🦙', name:'Gemma 2',       sub:'Google · 5.4 GB · Offline', type:'local'},
+  'qwen2.5':     {icon:'⚡', name:'Qwen 2.5',      sub:'Alibaba · 397 MB · Turbo',  type:'local'},
+  'gemini-cloud':{icon:'✨', name:'Gemini 2.5',    sub:'Google Cloud · Latest',      type:'cloud'},
+};
+
+// ── LOAD & RENDER MODELS ───────────────────────────────────
+async function loadModels(){
+  try{
+    const r = await fetch('/api/models');
+    mods = await r.json();
+    renderGrid();
+  }catch(e){ console.error(e) }
+}
+
+function renderGrid(){
+  const g = document.getElementById('modelGrid');
+  g.innerHTML = '';
+  mods.forEach(m => {
+    const mt     = META[m.id] || {icon:'🤖',name:m.name,sub:'',type:'local'};
+    const isAct  = m.id === sel;
+    const avail  = m.available !== false;
+    const isLoc  = mt.type === 'local';
+
+    const d = document.createElement('div');
+    d.className = ['mcard', isLoc?'local':'cloud', isAct?'active':'', !avail?'disabled':''].filter(Boolean).join(' ');
+    d.dataset.id = m.id;
+    d.onclick = () => chooseMod(m.id);
+
+    d.innerHTML = `
+      <div class="mcard-top">
+        <span class="mcard-icon">${mt.icon}</span>
+        <span class="mbadge ${isLoc?'local':'cloud'}">${m.badge||'LOCAL'}</span>
+      </div>
+      <div class="mcard-name">${mt.name}</div>
+      <div class="mcard-sub">${mt.sub}</div>
+      <div class="mcard-status">
+        <span class="sdot ${avail?'on':'off'}"></span>
+        ${avail ? 'Online · Ready' : 'Offline · Unavailable'}
+      </div>
+      <div class="check"><i class="fas fa-check"></i></div>
+    `;
+    g.appendChild(d);
+  });
+  updatePill();
+}
+
+function chooseMod(id){
+  const m = mods.find(x=>x.id===id);
+  if(!m || m.available===false) return;
+  sel = id;
+  renderGrid();
+}
+
+function updatePill(){
+  const m  = mods.find(x=>x.id===sel) || {};
+  const mt = META[sel] || {};
+  const pill = document.getElementById('activePill');
+  const txt  = document.getElementById('pillTxt');
+  pill.className = 'active-pill' + (mt.type==='cloud'?' cloud':'');
+  txt.textContent = (META[sel]?.name || sel) + (mt.type==='local' ? ' · Offline' : ' · Cloud');
+}
+
+// ── SEND ───────────────────────────────────────────────────
+async function sendTask(){
+  const cmd = document.getElementById('userInput').value.trim();
+  if(!cmd) return;
+  setStatus('Processing…', true);
+  try{
+    const r = await fetch('/agent',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({command:cmd, model:sel, context:'Web UI', repeat_count:0})
+    });
+    const d = await r.json();
+    setStatus('Done · ' + d.action, false);
+    if(d.value) speak(d.value);
+  }catch(e){ setStatus('Connection Error.', false) }
+}
+
+function setStatus(msg, busy){
+  document.getElementById('statusTxt').childNodes[document.getElementById('statusTxt').childNodes.length-1].textContent = ' '+msg;
+  document.getElementById('spinIcon').style.display = busy ? 'inline-block' : 'none';
+  document.getElementById('sendBtn').disabled = busy;
+  document.getElementById('stopBtn').style.display = busy ? 'inline-block' : 'none';
+}
+
+function stopTask(){ setStatus('Stopped.', false) }
+
+// ── MIC ────────────────────────────────────────────────────
+function toggleMic(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ alert('Voice not supported.'); return }
+  const btn = document.getElementById('micBtn');
+  if(rec){ rec.stop(); rec=null; btn.classList.remove('rec'); return }
+  rec = new SR();
+  rec.lang = document.getElementById('langSel').value;
+  btn.classList.add('rec');
+  rec.onresult = e => {
+    document.getElementById('userInput').value = e.results[0][0].transcript;
+    rec=null; btn.classList.remove('rec'); sendTask();
+  };
+  rec.onerror = () => { rec=null; btn.classList.remove('rec') };
+  rec.start();
+}
+
+// ── VOICE OUT ──────────────────────────────────────────────
+function speak(t){
+  if(!document.getElementById('voiceTog').checked) return;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(t));
+}
+
+// ── LOG COLOR ──────────────────────────────────────────────
+function logCls(msg){
+  if(msg.includes('[CRITICAL]')) return 'lm-crit';
+  if(msg.includes('[ERROR]'))    return 'lm-err';
+  if(msg.includes('[ACTION]'))   return 'lm-act';
+  if(msg.includes('[LLM]'))      return 'lm-llm';
+  return 'lm-info';
+}
+
+// ── POLL LOGS ──────────────────────────────────────────────
+async function fetchLogs(){
+  try{
+    const r = await fetch('/api/logs');
+    const logs = await r.json();
+    if(!logs.length) return;
+    const ll = document.getElementById('logLines');
+    ll.innerHTML = logs.map(l=>`
+      <div class="le">
+        <span class="lt">[${l.time}]</span>
+        <span class="${logCls(l.msg)}">${esc(l.msg)}</span>
+      </div>`).join('');
+    const c = document.getElementById('console');
+    c.scrollTop = c.scrollHeight;
+  }catch(e){}
+}
+
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ── INIT ───────────────────────────────────────────────────
+loadModels();
+setInterval(fetchLogs,  2000);
+setInterval(loadModels, 30000);
+</script>
 </body>
 </html>

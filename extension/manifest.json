@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Gemini Omni-Agent",
-  "version": "1.0",
-  "description": "AI Copilot that controls tabs and reads screens.",
+  "name": "AI Agent Pro",
+  "version": "2.0",
+  "description": "Autonomous browser AI powered by local Ollama LLMs (Gemma2, Qwen2.5) and Cloud Gemini.",
   "permissions": [
     "sidePanel",
     "activeTab",
@@ -19,7 +19,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Open Gemini Agent"
+    "default_title": "Open AI Agent Pro"
   },
   "side_panel": {
     "default_path": "sidepanel.html"

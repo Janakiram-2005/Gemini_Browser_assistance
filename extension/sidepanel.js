@@ -1,326 +1,476 @@
-// --- GLOBAL UI ELEMENTS ---
-const output = document.getElementById("output");
-const taskInput = document.getElementById("taskInput");
-const modeSelector = document.getElementById("modeSelector");
-const micBtn = document.getElementById("micBtn");
-const analyzeBtn = document.getElementById("analyzeBtn");
-const stopBtn = document.getElementById("stopBtn");
-const historyBtn = document.getElementById("historyBtn");
-const historyView = document.getElementById("historyView");
+// ═══════════════════════════════════════════════════════════
+//  AI Agent Pro — Side Panel JS
+//  Supports: Gemma2 (local), Qwen2.5 (local), Gemini Cloud
+// ═══════════════════════════════════════════════════════════
 
-// --- STATE VARIABLES ---
-let isRunning = false;
-let previousContext = "";
-let lastAction = "";
-let repeatCount = 0;
-let isVoiceEnabled = true;
+const API = "http://127.0.0.1:5000";
 
-// --- 1. THE MAIN LOOP (STATE-AWARE EXECUTION ENGINE) ---
-async function runAgent(command) {
-    if (!command) return;
-    
-    // INITIALIZE BEFORE LOOP
-    isRunning = true;
-    previousContext = "";
-    lastAction = "";
-    repeatCount = 0;
+// ── ELEMENTS ───────────────────────────────────────────────
+const taskInput  = document.getElementById("taskInput");
+const modeSelect = document.getElementById("modeSelect");
+const runBtn     = document.getElementById("runBtn");
+const stopBtn    = document.getElementById("stopBtn");
+const output     = document.getElementById("output");
+const statBadge  = document.getElementById("statBadge");
+const micBtn     = document.getElementById("micBtn");
+const voiceTogBtn= document.getElementById("voiceTogBtn");
+const histBtn    = document.getElementById("histBtn");
+const histOverlay= document.getElementById("histOverlay");
+const closeHist  = document.getElementById("closeHist");
+const clearHistBtn= document.getElementById("clearHistBtn");
+const histList   = document.getElementById("histList");
+const modelPill  = document.getElementById("modelPill");
+const pillTxt    = document.getElementById("pillTxt");
 
-    updateUI("busy");
-    output.innerText = "Engine Initializing...";
+// ── STATE ──────────────────────────────────────────────────
+let isRunning     = false;
+let prevCtx       = "";
+let lastAct       = "";
+let repeatCount   = 0;
+let voiceEnabled  = true;
+let selectedModel = "gemma2";   // default: local Gemma2
+let allModels     = [];
 
-    while (isRunning) {
-        try {
-            // A. CAPTURE CURRENT PAGE
-            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!activeTab || !isRunning) break;
+// ── MODEL META ─────────────────────────────────────────────
+const MODEL_META = {
+  "gemma2":       { icon: "🦙", name: "Gemma 2",    sub: "Google · 5.4 GB · Offline",  type: "local" },
+  "qwen2.5":      { icon: "⚡", name: "Qwen 2.5",   sub: "Alibaba · 397 MB · Turbo",   type: "local" },
+  "gemini-cloud": { icon: "✨", name: "Gemini 2.5", sub: "Google Cloud · Latest",       type: "cloud" },
+};
 
-            const scriptRes = await chrome.scripting.executeScript({
-                target: { tabId: activeTab.id },
-                func: () => document.body.innerText
-            });
-            const context = scriptRes[0]?.result || "";
-
-            // B. SEND REQUEST
-            const API_URL = "http://127.0.0.1:5000/agent";
-            const instruction = modeSelector.value || undefined;
-
-            const payload = {
-                command: command,
-                context: context,
-                previous_context: previousContext,
-                last_action: lastAction,
-                repeat_count: repeatCount
-            };
-            if (instruction) payload.instruction = instruction;
-
-            // STATE HEARTBEAT
-            console.log(`📡 SENDING STATE | lastAction: "${lastAction}" | repeatCount: ${repeatCount}`);
-
-            const response = await fetch(API_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-
-            if (response.status === 429) {
-                output.innerText = "⚠️ Rate Limit Hit. Backing off for 10s...";
-                await new Promise(r => setTimeout(r, 10000));
-                continue;
-            }
-
-            if (!response.ok) {
-                // HANDLE OTHER ERRORS
-                const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.value || "Backend Unavailable");
-            }
-
-            const data = await response.json();
-
-            // C. ACTION VALIDATION (NORMALIZED)
-            const action = (data?.action || "").trim().toLowerCase();
-            const validActions = ["open_new_tab", "click", "type", "scroll", "close_tab", "switch_tab", "wait", "stop", "navigate", "chat"];
-            
-            if (!action || !validActions.includes(action)) {
-                console.log("Invalid action received:", action);
-                await new Promise(r => setTimeout(r, 2000));
-                continue;
-            }
-
-            // D. DEBUG LOGGING
-            console.log("ACTION:", action, "VALUE:", data.value, "SELECTOR:", data.selector);
-
-            if (!isRunning) break;
-
-            // E. LOOP DETECTION (use normalized 'action', not raw data.action)
-            if (action === lastAction) {
-                repeatCount++;
-            } else {
-                repeatCount = 0;
-            }
-
-            // G. EXECUTE ACTION (CRITICAL: DO BEFORE STOP CHECK)
-            await executeAction(data);
-
-            // H. STOP CONDITIONS
-            if (data.action === "stop" || data.is_goal_achieved === true || repeatCount >= 2) {
-                output.innerText = data.caption || data.value || "Task Complete ✅";
-                if (isVoiceEnabled) speak(output.innerText);
-                isRunning = false;
-                break;
-            }
-
-            // I. UPDATE STATE
-            previousContext = context;
-            lastAction = action;
-
-            // J. RATE LIMIT (MANDATORY - 3S)
-            await new Promise(r => setTimeout(r, 3000));
-
-        } catch (err) {
-            console.error("Execution Error:", err);
-            output.innerText = `Error: ${err.message}`;
-            isRunning = false;
-            break;
-        }
-    }
-    updateUI("idle");
+// ═══════════════════════════════════════════════════════════
+//  1. MODEL LOADING & RENDERING
+// ═══════════════════════════════════════════════════════════
+async function loadModels() {
+  try {
+    const r = await fetch(`${API}/api/models`);
+    allModels = await r.json();
+    renderModels();
+  } catch (e) {
+    // Backend offline — show stubs
+    allModels = [
+      { id: "gemma2",       name: "Gemma 2",    badge: "LOCAL", provider: "ollama", available: false },
+      { id: "qwen2.5",      name: "Qwen 2.5",   badge: "LOCAL", provider: "ollama", available: false },
+      { id: "gemini-cloud", name: "Gemini 2.5", badge: "CLOUD", provider: "vertex", available: false },
+    ];
+    renderModels();
+    output.textContent = "⚠️ Backend offline. Start app.py first.";
+  }
 }
 
-// --- 2. ACTION EXECUTION ---
-async function executeAction(data) {
-    // Use NORMALIZED action (trim + lowercase) for reliable matching
-    const action = (data?.action || "").trim().toLowerCase();
-    const { selector, value, caption } = data;
-    
-    output.innerText = caption || `Executing ${action}...`;
-    console.log("EXECUTING:", action, value); // VERIFICATION LOG
+function renderModels() {
+  const row = document.getElementById("modelRow");
+  row.innerHTML = "";
 
-    if (value && (value.startsWith("chrome://") || value.startsWith("chrome-extension://"))) {
-        console.log("Blocked restricted URL");
-        return;
-    }
+  allModels.forEach(m => {
+    const mt      = MODEL_META[m.id] || { icon: "🤖", name: m.name, sub: "", type: "local" };
+    const isLocal = mt.type === "local";
+    const avail   = m.available !== false;
+    const isAct   = m.id === selectedModel;
 
-    try {
-        switch (action) {
-            case "open_new_tab":
-            case "navigate":
-                await chrome.tabs.create({ url: value });
-                break;
+    const card = document.createElement("div");
+    card.className = [
+      "mcard",
+      isLocal ? "local" : "cloud",
+      isAct   ? "active"   : "",
+      !avail  ? "disabled" : ""
+    ].filter(Boolean).join(" ");
+    card.dataset.id = m.id;
 
-            case "click":
-            case "type":
-            case "scroll":
-                await runInteractionScript(action, data);
-                break;
+    card.innerHTML = `
+      <span class="mcard-icon">${mt.icon}</span>
+      <div class="mcard-body">
+        <div class="mcard-name">${mt.name}</div>
+        <div class="mcard-sub">${mt.sub}</div>
+      </div>
+      <div class="mcard-right">
+        <span class="mbadge ${isLocal ? "local" : "cloud"}">${m.badge || "LOCAL"}</span>
+        <span class="sdot ${avail ? "on" : "off"}"></span>
+      </div>
+      <span class="check-ring">${isAct ? "✓" : ""}</span>
+    `;
 
-            case "close_tab":
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (tab) await chrome.tabs.remove(tab.id);
-                break;
-
-            case "switch_tab":
-                window.focus();
-                break;
-
-            case "wait":
-                await new Promise(r => setTimeout(r, 1500));
-                break;
-
-            case "chat":
-                output.innerText = value || "Agent response received.";
-                if (isVoiceEnabled) speak(output.innerText);
-                break;
-        }
-    } catch (e) {
-        console.error("Executor Failed:", e);
-    }
-}
-
-// --- 3. INTERACTION SCRIPT ---
-async function runInteractionScript(type, data) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) return;
-
-    await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        args: [type, data],
-        func: (action, params) => {
-            function findEl() {
-                let el = document.querySelector(params.selector);
-                if (!el && params.value && (action === "click" || action === "type")) {
-                    const lowerVal = params.value.toLowerCase();
-                    const candidates = [...document.querySelectorAll("button, a, div, span, input, textarea")];
-                    el = candidates.find(e => (e.innerText || e.value || "").toLowerCase().includes(lowerVal));
-                }
-                if (!el && action === "type") el = document.querySelector("textarea, input, [contenteditable='true']");
-                return el;
-            }
-
-            const el = findEl();
-            if (!el && action !== "scroll") return;
-
-            try {
-                switch (action) {
-                    case "click":
-                        el.click();
-                        break;
-                    case "type":
-                        el.focus();
-                        if (el.value !== undefined) el.value = "";
-                        el.innerText = "";
-                        
-                        if (el.classList && el.classList.contains('CodeMirror')) {
-                            el.CodeMirror.setValue(""); 
-                            el.CodeMirror.setValue(params.value);
-                        } else if (el.contentEditable === "true") {
-                            el.innerText = params.value;
-                        } else {
-                            el.value = params.value;
-                        }
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        break;
-                    case "scroll":
-                        window.scrollBy(0, 500);
-                        break;
-                }
-            } catch (e) {}
-        }
+    card.addEventListener("click", () => {
+      if (!avail) return;
+      selectedModel = m.id;
+      renderModels();
+      savePref("selectedModel", selectedModel);
+      updatePill();
     });
+
+    row.appendChild(card);
+  });
+
+  updatePill();
 }
 
-// --- 4. VOICE FIX ---
-function normalizeCommand(text) {
-    return text.toLowerCase()
-        .replace("lead code", "leetcode")
-        .replace("open mail", "open gmail")
-        .replace("sign out", "logout")
-        .trim();
+function updatePill() {
+  const m  = allModels.find(x => x.id === selectedModel) || {};
+  const mt = MODEL_META[selectedModel] || {};
+  modelPill.className = "model-pill" + (mt.type === "cloud" ? " cloud" : "");
+  pillTxt.textContent = (mt.name || selectedModel) + (mt.type === "local" ? " · Offline" : " · Cloud");
 }
 
-function speak(t) {
-    if (!isVoiceEnabled) return;
-    const synth = window.speechSynthesis;
-    const utterance = new SpeechSynthesisUtterance(t);
-    const voices = synth.getVoices();
-    utterance.voice = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) || voices[0];
-    synth.cancel();
-    synth.speak(utterance);
-}
+// ═══════════════════════════════════════════════════════════
+//  2. AGENT LOOP
+// ═══════════════════════════════════════════════════════════
+async function runAgent(command) {
+  if (!command || isRunning) return;
 
-// --- 5. UI & EVENTS ---
-function updateUI(state) {
-    const isBusy = state === "busy";
-    analyzeBtn.style.display = isBusy ? "none" : "block";
-    stopBtn.style.display = isBusy ? "block" : "none";
-    document.getElementById("taskBadge").innerText = isBusy ? "EXECUTING" : "IDLE";
-}
+  isRunning   = true;
+  prevCtx     = "";
+  lastAct     = "";
+  repeatCount = 0;
 
-function unlockAudio() {
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
-}
+  setUIBusy(true);
+  output.textContent = "🚀 Initialising…";
 
-analyzeBtn.addEventListener("click", () => { unlockAudio(); runAgent(taskInput.value.trim()); });
-stopBtn.addEventListener("click", () => { isRunning = false; updateUI("idle"); output.innerText = "Stopped."; });
+  while (isRunning) {
+    try {
+      // A. CAPTURE PAGE
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !isRunning) break;
 
-taskInput.addEventListener("keypress", (e) => { 
-    if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        unlockAudio();
-        runAgent(taskInput.value.trim());
+      let context = "";
+      try {
+        const res = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => document.body?.innerText?.slice(0, 8000) || ""
+        });
+        context = res[0]?.result || "";
+      } catch (_) {}
+
+      // B. BUILD PAYLOAD
+      const payload = {
+        command,
+        model:            selectedModel,
+        context,
+        previous_context: prevCtx,
+        last_action:      lastAct,
+        repeat_count:     repeatCount,
+      };
+      const instr = modeSelect.value;
+      if (instr) payload.instruction = instr;
+
+      console.log(`📡 [Agent] model=${selectedModel} action=${lastAct} repeat=${repeatCount}`);
+
+      // C. CALL BACKEND
+      const resp = await fetch(`${API}/agent`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(payload)
+      });
+
+      if (resp.status === 429) {
+        output.textContent = "⚠️ Rate limit — cooling down 10s…";
+        await sleep(10000);
+        continue;
+      }
+      if (!resp.ok) {
+        const e = await resp.json().catch(() => ({}));
+        throw new Error(e.value || `HTTP ${resp.status}`);
+      }
+
+      const data   = await resp.json();
+      const action = (data?.action || "").trim().toLowerCase();
+
+      // D. VALIDATE
+      const VALID = ["open_new_tab","click","type","scroll","close_tab","switch_tab","wait","stop","navigate","chat"];
+      if (!action || !VALID.includes(action)) {
+        await sleep(2000); continue;
+      }
+
+      if (!isRunning) break;
+
+      // E. LOOP GUARD
+      if (action === lastAct) repeatCount++;
+      else repeatCount = 0;
+
+      // F. EXECUTE
+      await executeAction(data);
+
+      // G. STOP CONDITIONS
+      if (action === "stop" || data.is_goal_achieved || repeatCount >= 3) {
+        const msg = data.caption || data.value || "✅ Task complete!";
+        output.textContent = msg;
+        if (voiceEnabled) speak(msg);
+        isRunning = false;
+        break;
+      }
+
+      // H. ADVANCE STATE
+      prevCtx = context;
+      lastAct = action;
+      await sleep(3000);
+
+    } catch (err) {
+      console.error("Agent error:", err);
+      output.textContent = `❌ Error: ${err.message}`;
+      isRunning = false;
+      break;
     }
-});
+  }
+
+  setUIBusy(false);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  3. ACTION EXECUTOR
+// ═══════════════════════════════════════════════════════════
+async function executeAction(data) {
+  const action = (data?.action || "").trim().toLowerCase();
+  const { selector, value, caption } = data;
+
+  output.textContent = caption || `Executing: ${action}…`;
+  statBadge.textContent = action.toUpperCase();
+
+  if (value && (value.startsWith("chrome://") || value.startsWith("chrome-extension://"))) return;
+
+  try {
+    switch (action) {
+      case "open_new_tab":
+      case "navigate":
+        await chrome.tabs.create({ url: value });
+        break;
+
+      case "click":
+      case "type":
+      case "scroll":
+        await runScript(action, data);
+        break;
+
+      case "close_tab":
+        const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (t) await chrome.tabs.remove(t.id);
+        break;
+
+      case "switch_tab":
+        window.focus();
+        break;
+
+      case "wait":
+        await sleep(1500);
+        break;
+
+      case "chat":
+        output.textContent = value || "Agent response received.";
+        if (voiceEnabled) speak(output.textContent);
+        break;
+    }
+  } catch (e) { console.error("Executor:", e) }
+}
+
+// ── DOM SCRIPT ─────────────────────────────────────────────
+async function runScript(type, data) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    args:   [type, data],
+    func: (action, params) => {
+      function findEl() {
+        let el = document.querySelector(params.selector);
+        if (!el && params.value && ["click","type"].includes(action)) {
+          const low = params.value.toLowerCase();
+          el = [...document.querySelectorAll("button,a,div,span,input,textarea")]
+                .find(e => (e.innerText || e.value || "").toLowerCase().includes(low));
+        }
+        if (!el && action === "type") el = document.querySelector("textarea,input,[contenteditable='true']");
+        return el;
+      }
+      const el = findEl();
+      if (!el && action !== "scroll") return;
+      try {
+        if (action === "click") { el.click(); return; }
+        if (action === "scroll") { window.scrollBy(0, 500); return; }
+        if (action === "type") {
+          el.focus();
+          if (el.classList?.contains("CodeMirror") && el.CodeMirror) {
+            el.CodeMirror.setValue(""); el.CodeMirror.setValue(params.value);
+          } else if (el.contentEditable === "true") {
+            el.innerText = params.value;
+          } else {
+            el.value = ""; el.value = params.value;
+          }
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      } catch (_) {}
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  4. VOICE
+// ═══════════════════════════════════════════════════════════
+let recognition = null;
+
+function normalise(t) {
+  return t.toLowerCase()
+    .replace("lead code","leetcode")
+    .replace("open mail","open gmail")
+    .trim();
+}
+
+function speak(text) {
+  if (!voiceEnabled) return;
+  const synth = window.speechSynthesis;
+  const u     = new SpeechSynthesisUtterance(text);
+  const voices = synth.getVoices();
+  u.voice = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) || voices[0];
+  synth.cancel();
+  synth.speak(u);
+}
 
 micBtn.addEventListener("click", async () => {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-    } catch (err) {}
+  // unlock audio
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
 
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
+  if (recognition) { recognition.stop(); recognition = null; micBtn.classList.remove("rec"); return; }
 
-    const recognition = new SR();
-    recognition.lang = 'en-US';
-    recognition.continuous = true; 
-    recognition.interimResults = true; 
-    
-    micBtn.classList.add("listening");
-    
-    recognition.onresult = (event) => {
-        const transcript = event.results[event.results.length - 1][0].transcript;
-        const normalized = normalizeCommand(transcript);
-        taskInput.value = normalized;
-        if (event.results[event.results.length - 1].isFinal) {
-            unlockAudio();
-            runAgent(normalized);
-        }
-    };
-    recognition.onend = () => micBtn.classList.remove("listening");
-    recognition.start();
-});
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { output.textContent = "⚠️ Speech not supported."; return; }
 
-document.getElementById("voiceToggle").addEventListener("click", (e) => {
-    isVoiceEnabled = !isVoiceEnabled;
-    e.target.classList.toggle('active', isVoiceEnabled);
-    e.target.innerText = isVoiceEnabled ? "🎧 Voice" : "🔇 Muted";
-    if (isVoiceEnabled) { unlockAudio(); speak("Voice enabled"); }
-});
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach(t => t.stop());
+  } catch (_) {}
 
-historyBtn.addEventListener("click", () => {
-    const isVisible = historyView.style.display === "block";
-    historyView.style.display = isVisible ? "none" : "block";
-    if (!isVisible) {
-        fetch("http://127.0.0.1:5000/history")
-            .then(res => res.json())
-            .then(data => {
-                historyView.innerHTML = "";
-                data.forEach(item => {
-                    const div = document.createElement("div");
-                    div.className = "history-item";
-                    div.innerText = item.command;
-                    div.onclick = () => { taskInput.value = item.command; historyView.style.display = "none"; };
-                    historyView.appendChild(div);
-                });
-            });
+  recognition = new SR();
+  recognition.lang = "en-US";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  micBtn.classList.add("rec");
+
+  recognition.onresult = e => {
+    const last = e.results[e.results.length - 1];
+    const txt  = normalise(last[0].transcript);
+    taskInput.value = txt;
+    if (last.isFinal) {
+      recognition.stop(); recognition = null; micBtn.classList.remove("rec");
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+      runAgent(txt);
     }
+  };
+  recognition.onend = () => { recognition = null; micBtn.classList.remove("rec"); };
+  recognition.start();
 });
+
+// ═══════════════════════════════════════════════════════════
+//  5. UI HELPERS
+// ═══════════════════════════════════════════════════════════
+function setUIBusy(busy) {
+  runBtn.style.display  = busy ? "none"  : "flex";
+  stopBtn.style.display = busy ? "block" : "none";
+  statBadge.className   = busy ? "badge running" : "badge";
+  statBadge.textContent = busy ? "RUNNING" : "IDLE";
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── PREFERENCES ────────────────────────────────────────────
+function savePref(k, v) {
+  try { chrome.storage.local.set({ [k]: v }); } catch (_) {}
+}
+async function loadPrefs() {
+  try {
+    const p = await chrome.storage.local.get(["selectedModel","voiceEnabled"]);
+    if (p.selectedModel)  selectedModel = p.selectedModel;
+    if (p.voiceEnabled !== undefined) {
+      voiceEnabled = p.voiceEnabled;
+      voiceTogBtn.className = "hbtn" + (voiceEnabled ? " act" : "");
+      voiceTogBtn.innerHTML = `<i class="fas fa-headphones"></i> ${voiceEnabled ? "Voice" : "Muted"}`;
+    }
+  } catch (_) {}
+}
+
+// ═══════════════════════════════════════════════════════════
+//  6. EVENT BINDINGS
+// ═══════════════════════════════════════════════════════════
+runBtn.addEventListener("click", () => {
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+  runAgent(taskInput.value.trim());
+});
+
+stopBtn.addEventListener("click", () => {
+  isRunning = false;
+  setUIBusy(false);
+  output.textContent = "⏹ Stopped by user.";
+});
+
+taskInput.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+    runAgent(taskInput.value.trim());
+  }
+});
+
+voiceTogBtn.addEventListener("click", () => {
+  voiceEnabled = !voiceEnabled;
+  savePref("voiceEnabled", voiceEnabled);
+  voiceTogBtn.className = "hbtn" + (voiceEnabled ? " act" : "");
+  voiceTogBtn.innerHTML = `<i class="fas fa-headphones"></i> ${voiceEnabled ? "Voice" : "Muted"}`;
+  if (voiceEnabled) speak("Voice enabled");
+});
+
+// ── HISTORY ────────────────────────────────────────────────
+histBtn.addEventListener("click", () => {
+  histOverlay.style.display = "block";
+  loadHistory();
+});
+
+closeHist.addEventListener("click", () => {
+  histOverlay.style.display = "none";
+});
+
+clearHistBtn.addEventListener("click", () => {
+  histList.innerHTML = '<div style="color:var(--tx3);font-size:.78rem;text-align:center;padding:20px">History cleared</div>';
+});
+
+async function loadHistory() {
+  histList.innerHTML = '<div style="color:var(--tx3);font-size:.78rem;">Loading…</div>';
+  try {
+    const r    = await fetch(`${API}/history`);
+    const data = await r.json();
+    if (!data.length) {
+      histList.innerHTML = '<div style="color:var(--tx3);font-size:.78rem;text-align:center;padding:20px">No history yet</div>';
+      return;
+    }
+    histList.innerHTML = "";
+    data.forEach(item => {
+      const isCloud = item.model === "gemini-cloud";
+      const d = document.createElement("div");
+      d.className = "hist-item";
+      d.innerHTML = `
+        <div class="hist-cmd">${escHtml(item.command)}</div>
+        <div class="hist-meta">
+          <div>${item.time || ""}</div>
+          <span class="hist-model-tag ${isCloud ? "cloud" : ""}">${item.model || "unknown"}</span>
+        </div>
+      `;
+      d.addEventListener("click", () => {
+        taskInput.value = item.command;
+        histOverlay.style.display = "none";
+      });
+      histList.appendChild(d);
+    });
+  } catch (e) {
+    histList.innerHTML = '<div style="color:var(--danger);font-size:.78rem;">Could not load history — is the server running?</div>';
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ═══════════════════════════════════════════════════════════
+//  7. BOOT
+// ═══════════════════════════════════════════════════════════
+(async () => {
+  await loadPrefs();
+  await loadModels();
+  // Refresh model availability every 30 s
+  setInterval(loadModels, 30000);
+})();

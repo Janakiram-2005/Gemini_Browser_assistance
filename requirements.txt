@@ -5,3 +5,4 @@ python-dotenv==1.0.1
 google-genai
 gunicorn
 lxml_html_clean
+requests>=2.31.0

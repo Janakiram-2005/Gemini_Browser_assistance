@@ -3,253 +3,303 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Agent Pro</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <style>
-    /* --- RESET & BASE --- */
-    body { 
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; 
-      background: #0f172a; 
-      color: #f1f5f9; 
-      margin: 0; 
-      padding: 16px; 
-      display: flex; 
-      flex-direction: column; 
-      gap: 16px; 
-      height: 100vh; 
-      box-sizing: border-box; 
-      overflow: hidden;
+    /* ── TOKENS ─────────────────────────────────── */
+    :root{
+      --p:#8b5cf6; --p2:#6d28d9; --p-glow:rgba(139,92,246,.35);
+      --s:#06b6d4;
+      --local:#34d399; --local-dim:rgba(52,211,153,.12); --local-b:rgba(52,211,153,.38);
+      --cloud:#60a5fa; --cloud-dim:rgba(96,165,250,.12);  --cloud-b:rgba(96,165,250,.38);
+      --danger:#ef4444; --ok:#10b981;
+      --tx:#f1f5f9; --tx2:#94a3b8; --tx3:#475569;
+      --bg:#080f1e;
+      --card:rgba(15,25,50,.82);
+      --border:rgba(255,255,255,.09);
+      --inp:rgba(8,16,36,.8);
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{
+      height:100vh;overflow:hidden;
+      font-family:"Segoe UI",system-ui,sans-serif;
+      color:var(--tx);background:var(--bg);
+      display:flex;flex-direction:column;
     }
 
-    /* --- GLASS CARDS --- */
-    .card { 
-      background: rgba(30, 41, 59, 0.7); 
-      border: 1px solid rgba(255, 255, 255, 0.08); 
-      border-radius: 16px; 
-      padding: 16px; 
-      position: relative; 
-      backdrop-filter: blur(12px); 
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    /* ── ANIMATED BG ─────────────────────────────── */
+    body::before{
+      content:'';position:fixed;inset:-20%;z-index:-1;
+      background:
+        radial-gradient(35% 35% at 15% 15%,rgba(139,92,246,.18) 0%,transparent 55%),
+        radial-gradient(30% 30% at 85% 20%,rgba(6,182,212,.14) 0%,transparent 55%),
+        radial-gradient(38% 38% at 50% 85%,rgba(79,70,229,.12) 0%,transparent 60%),
+        radial-gradient(25% 25% at 80% 75%,rgba(52,211,153,.08) 0%,transparent 50%);
+      filter:blur(55px);animation:rot 35s linear infinite;
+    }
+    @keyframes rot{to{transform:rotate(360deg)}}
+
+    /* ── SCROLLBAR ───────────────────────────────── */
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
+
+    /* ── HEADER ──────────────────────────────────── */
+    .hdr{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:12px 14px;
+      background:rgba(8,16,36,.9);
+      border-bottom:1px solid var(--border);
+      backdrop-filter:blur(16px);flex-shrink:0;
+    }
+    .hdr-left{display:flex;align-items:center;gap:9px}
+    .logo{width:26px;height:26px;animation:float 5s ease-in-out infinite;flex-shrink:0}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+    .title{font-size:.95rem;font-weight:800;
+      background:linear-gradient(135deg,var(--p),var(--s));
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .hdr-right{display:flex;gap:6px;align-items:center}
+
+    .hbtn{
+      background:rgba(255,255,255,.05);border:1px solid var(--border);
+      border-radius:7px;color:var(--tx2);font-size:.72rem;
+      padding:5px 9px;cursor:pointer;transition:all .2s;
+      display:flex;align-items:center;gap:5px;white-space:nowrap;
+    }
+    .hbtn:hover{background:rgba(255,255,255,.1);color:var(--tx)}
+    .hbtn.act{color:var(--ok);border-color:var(--ok);background:rgba(16,185,129,.08)}
+
+    /* active-model tiny pill */
+    .model-pill{
+      font-size:.62rem;font-weight:700;padding:3px 9px;border-radius:99px;
+      background:var(--local-dim);border:1px solid var(--local-b);color:var(--local);
+      display:flex;align-items:center;gap:4px;transition:all .3s;
+    }
+    .model-pill.cloud{background:var(--cloud-dim);border-color:var(--cloud-b);color:var(--cloud)}
+    .pdot{width:5px;height:5px;border-radius:50%;background:currentColor;animation:blink 2s infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+    /* ── SCROLL AREA ─────────────────────────────── */
+    .body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+
+    /* ── GLASS PANEL ─────────────────────────────── */
+    .panel{
+      background:var(--card);border:1px solid var(--border);
+      border-radius:13px;padding:12px;backdrop-filter:blur(12px);
     }
 
-    /* --- HEADER --- */
-    .header { 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-      margin-bottom: 4px;
+    /* ── MODEL TOGGLE ────────────────────────────── */
+    .sec-label{
+      font-size:.6rem;text-transform:uppercase;letter-spacing:.12em;
+      color:var(--tx3);margin-bottom:8px;display:flex;align-items:center;gap:6px;
     }
-    h2 { 
-      margin: 0; 
-      font-size: 1.1rem; 
-      background: linear-gradient(135deg, #a78bfa, #22d3ee); 
-      -webkit-background-clip: text; 
-      -webkit-text-fill-color: transparent; 
-      font-weight: 800; 
-      letter-spacing: 0.5px;
-    }
-    
-    .icon-group { display: flex; gap: 8px; }
-    .icon-btn { 
-      background: rgba(255, 255, 255, 0.05); 
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 8px;
-      cursor: pointer; 
-      color: #94a3b8; 
-      font-size: 0.85rem; 
-      padding: 6px 10px;
-      transition: all 0.2s; 
-    }
-    .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
-    .icon-btn.active { color: #38bdf8; border-color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
+    .sec-label::after{content:'';flex:1;height:1px;background:var(--border)}
 
-    /* --- INPUT AREA --- */
-    .input-wrapper { position: relative; width: 100%; display: flex; flex-direction: column; gap: 10px; }
-    
-    textarea { 
-      width: 100%; 
-      height: 80px; 
-      background: rgba(15, 23, 42, 0.6); 
-      border: 1px solid rgba(255, 255, 255, 0.1); 
-      color: #f8fafc; 
-      border-radius: 12px; 
-      padding: 12px 40px 12px 12px; 
-      box-sizing: border-box; 
-      resize: none; 
-      font-family: inherit; 
-      font-size: 0.9rem;
-      outline: none; 
-      transition: border-color 0.2s;
-    }
-    textarea:focus { border-color: #8b5cf6; }
-    textarea::placeholder { color: #64748b; }
+    .model-row{display:flex;flex-direction:column;gap:7px}
 
-    /* --- MODE SELECTOR --- */
-    .mode-row { display: flex; align-items: center; gap: 8px; }
-    select {
-      flex: 1;
-      background: rgba(15, 23, 42, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      color: #e2e8f0;
-      border-radius: 8px;
-      padding: 8px;
-      font-size: 0.85rem;
-      outline: none;
-      cursor: pointer;
+    .mcard{
+      border-radius:9px;padding:9px 11px;border:1.5px solid transparent;
+      background:rgba(255,255,255,.03);cursor:pointer;
+      transition:all .22s ease;display:flex;align-items:center;gap:10px;
+      position:relative;overflow:hidden;
     }
-    select:focus { border-color: #38bdf8; }
+    .mcard::before{
+      content:'';position:absolute;inset:0;border-radius:inherit;
+      background:transparent;transition:.22s;
+    }
+    .mcard:hover{transform:translateX(3px)}
+    .mcard.local:hover::before{background:var(--local-dim)}
+    .mcard.cloud:hover::before{background:var(--cloud-dim)}
+    .mcard.active.local{border-color:var(--local);box-shadow:0 0 14px rgba(52,211,153,.22)}
+    .mcard.active.cloud{border-color:var(--cloud);box-shadow:0 0 14px rgba(96,165,250,.22)}
+    .mcard.disabled{opacity:.32;cursor:not-allowed;pointer-events:none}
 
-    /* --- MIC BUTTON --- */
-    #micBtn { 
-      position: absolute; 
-      top: 10px; 
-      right: 10px; 
-      background: none; 
-      border: none; 
-      cursor: pointer; 
-      font-size: 1.2rem; 
-      padding: 4px;
-      border-radius: 50%;
-      transition: 0.2s;
-      filter: grayscale(100%);
-      opacity: 0.7;
-    }
-    #micBtn:hover { filter: grayscale(0%); opacity: 1; background: rgba(255,255,255,0.05); }
-    #micBtn.listening { 
-      filter: grayscale(0%); 
-      opacity: 1; 
-      animation: pulse 1.5s infinite; 
-    }
+    .mcard-icon{font-size:1.4rem;flex-shrink:0;z-index:1}
+    .mcard-body{flex:1;z-index:1}
+    .mcard-name{font-size:.82rem;font-weight:700}
+    .mcard-sub{font-size:.65rem;color:var(--tx2);margin-top:1px}
 
-    /* --- ACTION BUTTONS --- */
-    .btn-row { display: flex; gap: 10px; }
-    
-    .main-btn { 
-      flex: 1; 
-      padding: 12px; 
-      background: linear-gradient(90deg, #6366f1, #8b5cf6); 
-      border: none; 
-      color: white; 
-      border-radius: 10px; 
-      cursor: pointer; 
-      font-weight: 600; 
-      font-size: 0.9rem;
-      box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.4);
-      transition: transform 0.1s, box-shadow 0.2s;
+    .mcard-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;z-index:1;flex-shrink:0}
+    .mbadge{font-size:.55rem;font-weight:800;padding:2px 6px;border-radius:99px}
+    .mbadge.local{background:var(--local-dim);color:var(--local);border:1px solid var(--local-b)}
+    .mbadge.cloud{background:var(--cloud-dim);color:var(--cloud);border:1px solid var(--cloud-b)}
+    .sdot{width:6px;height:6px;border-radius:50%;background:var(--tx3)}
+    .sdot.on{background:var(--local);box-shadow:0 0 5px var(--local);animation:blink 2s infinite}
+    .sdot.off{background:var(--danger)}
+    .check-ring{
+      width:18px;height:18px;border-radius:50%;border:1.5px solid var(--tx3);
+      display:flex;align-items:center;justify-content:center;font-size:.55rem;
+      transition:all .22s;flex-shrink:0;
     }
-    .main-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 12px -1px rgba(99, 102, 241, 0.5); }
-    .main-btn:active { transform: translateY(0); }
+    .mcard.active.local .check-ring{background:var(--local);border-color:var(--local);color:#000;font-weight:900}
+    .mcard.active.cloud .check-ring{background:var(--cloud);border-color:var(--cloud);color:#000;font-weight:900}
 
-    .stop-btn { 
-      flex: 0.4;
-      padding: 12px; 
-      background: rgba(239, 68, 68, 0.15); 
-      border: 1px solid rgba(239, 68, 68, 0.5);
-      color: #f87171; 
-      border-radius: 10px; 
-      cursor: pointer; 
-      display: none; 
-      font-weight: 600;
-      transition: 0.2s;
-    }
-    .stop-btn:hover { background: rgba(239, 68, 68, 0.25); color: #fff; }
+    /* shimmer */
+    .sk{border-radius:9px;height:56px;
+      background:linear-gradient(90deg,rgba(255,255,255,.04) 25%,rgba(255,255,255,.08) 50%,rgba(255,255,255,.04) 75%);
+      background-size:200% 100%;animation:sk 1.5s infinite}
+    @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
-    /* --- STATUS CARD --- */
-    .status-card { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
-    .status-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; }
-    #output { 
-      font-size: 0.9rem; 
-      color: #e2e8f0; 
-      line-height: 1.4; 
-      white-space: pre-wrap;
+    /* ── TASK INPUT ──────────────────────────────── */
+    .inp-wrap{position:relative}
+    textarea{
+      width:100%;height:72px;resize:none;
+      background:var(--inp);border:1px solid var(--border);
+      color:var(--tx);border-radius:10px;
+      padding:10px 38px 10px 12px;
+      font-family:inherit;font-size:.85rem;outline:none;
+      transition:border-color .2s,box-shadow .2s;
+      box-sizing:border-box;
     }
+    textarea:focus{border-color:var(--p);box-shadow:0 0 0 2.5px var(--p-glow)}
+    textarea::placeholder{color:var(--tx3)}
+    #micBtn{
+      position:absolute;top:9px;right:9px;
+      background:none;border:none;cursor:pointer;
+      font-size:1.05rem;padding:4px;color:var(--tx3);
+      border-radius:6px;transition:.2s;
+    }
+    #micBtn:hover{color:var(--p);background:rgba(139,92,246,.12)}
+    #micBtn.rec{color:var(--danger);animation:blink 1s infinite}
 
-    /* --- HISTORY DRAWER --- */
-    #historyView { 
-      display: none; 
-      position: absolute; 
-      top: 60px; left: 10px; right: 10px; bottom: 10px; 
-      background: rgba(15, 23, 42, 0.98); 
-      backdrop-filter: blur(20px);
-      z-index: 50; 
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.1);
-      padding: 16px; 
-      overflow-y: auto; 
+    /* ── MODE ROW ────────────────────────────────── */
+    .mode-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+    select{
+      flex:1;background:var(--inp);border:1px solid var(--border);
+      color:var(--tx);border-radius:8px;padding:6px 8px;font-size:.78rem;outline:none;cursor:pointer;
     }
-    
-    .history-item { 
-      padding: 12px; 
-      background: rgba(255,255,255,0.03); 
-      border-radius: 8px; 
-      margin-bottom: 8px; 
-      border: 1px solid rgba(255,255,255,0.05); 
-      font-size: 0.8rem; 
-      cursor: pointer;
-    }
-    .history-item:hover { background: rgba(255,255,255,0.06); }
-    
-    .clear-all-btn {
-      width: 100%; padding: 8px; margin-bottom: 12px;
-      background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444;
-      color: #ef4444; border-radius: 8px; cursor: pointer; font-size: 0.8rem;
-    }
+    select:focus{border-color:var(--s)}
 
-    /* --- SCROLLBAR --- */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-
-    @keyframes pulse { 
-      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 
-      70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } 
-      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } 
+    /* ── BUTTONS ─────────────────────────────────── */
+    .btn-row{display:flex;gap:8px;margin-top:10px}
+    .run-btn{
+      flex:1;padding:11px;
+      background:linear-gradient(130deg,var(--p),var(--p2));
+      border:none;color:#fff;border-radius:9px;cursor:pointer;
+      font-weight:700;font-size:.88rem;
+      box-shadow:0 4px 14px rgba(99,102,241,.38);
+      transition:all .2s;display:flex;align-items:center;justify-content:center;gap:7px;
     }
+    .run-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(99,102,241,.5)}
+    .run-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+    .stp-btn{
+      padding:11px 14px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.45);
+      color:#f87171;border-radius:9px;cursor:pointer;font-weight:700;font-size:.85rem;
+      transition:.2s;display:none;white-space:nowrap;
+    }
+    .stp-btn:hover{background:rgba(239,68,68,.22);color:#fff}
+
+    /* ── OUTPUT ──────────────────────────────────── */
+    .out-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .out-label{font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;color:var(--tx3)}
+    .badge{
+      font-size:.6rem;padding:2px 8px;border-radius:4px;font-weight:700;
+      background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.2);color:#a5b4fc;
+    }
+    .badge.running{background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.3);color:var(--local);animation:blink .8s infinite}
+    #output{font-size:.83rem;color:#e2e8f0;line-height:1.55;min-height:30px;white-space:pre-wrap;word-break:break-word}
+
+    /* ── HISTORY OVERLAY ─────────────────────────── */
+    #histOverlay{
+      display:none;position:fixed;inset:0;z-index:99;
+      background:rgba(5,10,24,.96);backdrop-filter:blur(20px);
+      padding:14px;overflow-y:auto;
+    }
+    .hist-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .hist-title{font-size:.9rem;font-weight:700;color:var(--p)}
+    .close-hist{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:7px;color:var(--tx2);padding:5px 10px;cursor:pointer;font-size:.75rem}
+    .hist-item{
+      padding:10px 12px;background:rgba(255,255,255,.03);border:1px solid var(--border);
+      border-radius:8px;margin-bottom:7px;font-size:.78rem;cursor:pointer;
+      display:flex;justify-content:space-between;align-items:center;
+      transition:.18s;
+    }
+    .hist-item:hover{background:rgba(255,255,255,.07)}
+    .hist-cmd{color:var(--tx);flex:1;margin-right:8px;word-break:break-word}
+    .hist-meta{font-size:.62rem;color:var(--tx3);white-space:nowrap;text-align:right}
+    .hist-model-tag{
+      font-size:.58rem;padding:1px 6px;border-radius:4px;margin-top:3px;display:inline-block;
+      background:var(--local-dim);color:var(--local);border:1px solid var(--local-b);
+    }
+    .hist-model-tag.cloud{background:var(--cloud-dim);color:var(--cloud);border-color:var(--cloud-b)}
+    .clear-btn{width:100%;padding:8px;margin-bottom:10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);color:#f87171;border-radius:8px;cursor:pointer;font-size:.78rem;transition:.18s}
+    .clear-btn:hover{background:rgba(239,68,68,.18)}
   </style>
 </head>
 <body>
-  
-  <div class="header">
-    <h2>✨ Gemini Omni Agent</h2>
-    <div class="icon-group">
-      <button class="icon-btn" id="historyBtn">📂 History</button>
-      <button class="icon-btn active" id="voiceToggle">🎧 Voice</button>
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-left">
+      <img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg" class="logo" alt="logo">
+      <span class="title">AI Agent Pro</span>
+    </div>
+    <div class="hdr-right">
+      <div class="model-pill" id="modelPill">
+        <span class="pdot"></span>
+        <span id="pillTxt">Loading…</span>
+      </div>
+      <button class="hbtn act" id="voiceTogBtn"><i class="fas fa-headphones"></i> Voice</button>
+      <button class="hbtn" id="histBtn"><i class="fas fa-clock-rotate-left"></i> History</button>
     </div>
   </div>
 
-  <div class="card">
-    <div class="input-wrapper">
-      <textarea id="taskInput" placeholder="Enter your task..."></textarea>
-      <button id="micBtn">🎙️</button>
-      
-      <div class="mode-row">
-        <span style="font-size: 0.75rem; color: #94a3b8;">Mode:</span>
-        <select id="modeSelector">
-          <option value="">(Optional)</option>
-          <option value="execute">Execute</option>
-          <option value="read">Read</option>
-          <option value="scan">Scan</option>
-          <option value="write">Write</option>
-          <option value="search_execute">Search Execute</option>
-          <option value="coding">Coding</option>
-        </select>
+  <!-- SCROLLABLE BODY -->
+  <div class="body">
+
+    <!-- MODEL SELECTOR -->
+    <div class="panel">
+      <div class="sec-label"><i class="fas fa-microchip"></i> AI Brain</div>
+      <div class="model-row" id="modelRow">
+        <div class="sk"></div>
+        <div class="sk"></div>
+        <div class="sk"></div>
       </div>
     </div>
-    
-    <div class="btn-row" style="margin-top: 12px;">
-      <button id="analyzeBtn" class="main-btn">🚀 Start Task</button>
-      <button id="stopBtn" class="stop-btn">🛑 Stop</button>
-    </div>
-  </div>
 
-  <div class="card status-card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="status-label">Activity</div>
-        <div id="metaInfo" style="font-size:0.65rem; color:#64748b; display:flex; gap:8px;">
-            <span id="taskBadge" style="background:rgba(99,102,241,0.1); padding:2px 6px; border-radius:4px; border:1px solid rgba(99,102,241,0.2);">IDLE</span>
-        </div>
+    <!-- TASK INPUT -->
+    <div class="panel">
+      <div class="sec-label"><i class="fas fa-terminal"></i> Task</div>
+      <div class="inp-wrap">
+        <textarea id="taskInput" placeholder="What should I do? e.g. 'Search Google for AI news and summarise'"></textarea>
+        <button id="micBtn" title="Voice Input"><i class="fas fa-microphone"></i></button>
+      </div>
+      <div class="mode-row">
+        <select id="modeSelect">
+          <option value="">⚙️ Auto Mode</option>
+          <option value="execute">⚡ Execute</option>
+          <option value="read">📖 Read</option>
+          <option value="scan">🔍 Scan</option>
+          <option value="write">✏️ Write</option>
+          <option value="search_execute">🌐 Search & Execute</option>
+          <option value="coding">💻 Coding</option>
+        </select>
+      </div>
+      <div class="btn-row">
+        <button class="run-btn" id="runBtn"><i class="fas fa-rocket"></i> Start Task</button>
+        <button class="stp-btn" id="stopBtn">🛑 Stop</button>
+      </div>
     </div>
-    <div id="output">Waiting for instructions...</div>
-  </div>
 
-  <div id="historyView"></div>
+    <!-- OUTPUT -->
+    <div class="panel">
+      <div class="out-hdr">
+        <span class="out-label"><i class="fas fa-wave-square"></i> Activity</span>
+        <span class="badge" id="statBadge">IDLE</span>
+      </div>
+      <div id="output">Waiting for instructions…</div>
+    </div>
+
+  </div><!-- /body -->
+
+  <!-- HISTORY OVERLAY -->
+  <div id="histOverlay">
+    <div class="hist-top">
+      <span class="hist-title"><i class="fas fa-clock-rotate-left"></i> Command History</span>
+      <button class="close-hist" id="closeHist"><i class="fas fa-xmark"></i> Close</button>
+    </div>
+    <button class="clear-btn" id="clearHistBtn"><i class="fas fa-trash"></i> Clear All</button>
+    <div id="histList"></div>
+  </div>
 
   <script src="sidepanel.js"></script>
 </body>
