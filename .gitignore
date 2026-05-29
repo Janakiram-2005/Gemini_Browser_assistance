@@ -1,21 +1,29 @@
-# Security: NEVER upload secrets
+# ── Security: NEVER upload secrets ────────────────────────────
 .env
+*.json
+!package.json
+!package-lock.json
 
-# Python compilation files
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# Virtual Environment (if you created one)
+# Virtual Environments
 venv/
 .venv/
 env/
+ENV/
 
-# OS generated files
+# OS files
 .DS_Store
 Thumbs.db
 
-# VS Code settings
+# Editor settings
 .vscode/
+.idea/
 
-# Browser Use generated files (optional, keeps repo clean)
+# Misc
 agent_history.gif
+exported_app_GeminiWeb-SuperBrain*/
