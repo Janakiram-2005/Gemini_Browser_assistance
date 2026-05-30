@@ -46,31 +46,31 @@
     /* ── HEADER ──────────────────────────────────── */
     .hdr{
       display:flex;align-items:center;justify-content:space-between;
-      padding:12px 14px;
+      padding:10px 12px;
       background:rgba(8,16,36,.9);
       border-bottom:1px solid var(--border);
       backdrop-filter:blur(16px);flex-shrink:0;
     }
     .hdr-left{display:flex;align-items:center;gap:9px}
-    .logo{width:26px;height:26px;animation:float 5s ease-in-out infinite;flex-shrink:0}
+    .logo{width:24px;height:24px;animation:float 5s ease-in-out infinite;flex-shrink:0}
     @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
-    .title{font-size:.95rem;font-weight:800;
+    .title{font-size:.9rem;font-weight:800;
       background:linear-gradient(135deg,var(--p),var(--s));
       -webkit-background-clip:text;-webkit-text-fill-color:transparent}
-    .hdr-right{display:flex;gap:6px;align-items:center}
+    .hdr-right{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 
     .hbtn{
       background:rgba(255,255,255,.05);border:1px solid var(--border);
-      border-radius:7px;color:var(--tx2);font-size:.72rem;
-      padding:5px 9px;cursor:pointer;transition:all .2s;
-      display:flex;align-items:center;gap:5px;white-space:nowrap;
+      border-radius:7px;color:var(--tx2);font-size:.68rem;
+      padding:4px 8px;cursor:pointer;transition:all .2s;
+      display:flex;align-items:center;gap:4px;white-space:nowrap;
     }
     .hbtn:hover{background:rgba(255,255,255,.1);color:var(--tx)}
     .hbtn.act{color:var(--ok);border-color:var(--ok);background:rgba(16,185,129,.08)}
 
     /* active-model tiny pill */
     .model-pill{
-      font-size:.62rem;font-weight:700;padding:3px 9px;border-radius:99px;
+      font-size:.6rem;font-weight:700;padding:3px 8px;border-radius:99px;
       background:var(--local-dim);border:1px solid var(--local-b);color:var(--local);
       display:flex;align-items:center;gap:4px;transition:all .3s;
     }
@@ -79,25 +79,25 @@
     @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
     /* ── SCROLL AREA ─────────────────────────────── */
-    .body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+    .body{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
 
     /* ── GLASS PANEL ─────────────────────────────── */
     .panel{
       background:var(--card);border:1px solid var(--border);
-      border-radius:13px;padding:12px;backdrop-filter:blur(12px);
+      border-radius:12px;padding:10px;backdrop-filter:blur(12px);
     }
 
     /* ── MODEL TOGGLE ────────────────────────────── */
     .sec-label{
-      font-size:.6rem;text-transform:uppercase;letter-spacing:.12em;
-      color:var(--tx3);margin-bottom:8px;display:flex;align-items:center;gap:6px;
+      font-size:.58rem;text-transform:uppercase;letter-spacing:.12em;
+      color:var(--tx3);margin-bottom:7px;display:flex;align-items:center;gap:6px;
     }
     .sec-label::after{content:'';flex:1;height:1px;background:var(--border)}
 
-    .model-row{display:flex;flex-direction:column;gap:7px}
+    .model-row{display:flex;flex-direction:column;gap:6px}
 
     .mcard{
-      border-radius:9px;padding:9px 11px;border:1.5px solid transparent;
+      border-radius:9px;padding:8px 10px;border:1.5px solid transparent;
       background:rgba(255,255,255,.03);cursor:pointer;
       transition:all .22s ease;display:flex;align-items:center;gap:10px;
       position:relative;overflow:hidden;
@@ -113,28 +113,28 @@
     .mcard.active.cloud{border-color:var(--cloud);box-shadow:0 0 14px rgba(96,165,250,.22)}
     .mcard.disabled{opacity:.32;cursor:not-allowed;pointer-events:none}
 
-    .mcard-icon{font-size:1.4rem;flex-shrink:0;z-index:1}
+    .mcard-icon{font-size:1.3rem;flex-shrink:0;z-index:1}
     .mcard-body{flex:1;z-index:1}
-    .mcard-name{font-size:.82rem;font-weight:700}
-    .mcard-sub{font-size:.65rem;color:var(--tx2);margin-top:1px}
+    .mcard-name{font-size:.8rem;font-weight:700}
+    .mcard-sub{font-size:.62rem;color:var(--tx2);margin-top:1px}
 
     .mcard-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;z-index:1;flex-shrink:0}
-    .mbadge{font-size:.55rem;font-weight:800;padding:2px 6px;border-radius:99px}
+    .mbadge{font-size:.52rem;font-weight:800;padding:2px 6px;border-radius:99px}
     .mbadge.local{background:var(--local-dim);color:var(--local);border:1px solid var(--local-b)}
     .mbadge.cloud{background:var(--cloud-dim);color:var(--cloud);border:1px solid var(--cloud-b)}
     .sdot{width:6px;height:6px;border-radius:50%;background:var(--tx3)}
     .sdot.on{background:var(--local);box-shadow:0 0 5px var(--local);animation:blink 2s infinite}
     .sdot.off{background:var(--danger)}
     .check-ring{
-      width:18px;height:18px;border-radius:50%;border:1.5px solid var(--tx3);
-      display:flex;align-items:center;justify-content:center;font-size:.55rem;
+      width:17px;height:17px;border-radius:50%;border:1.5px solid var(--tx3);
+      display:flex;align-items:center;justify-content:center;font-size:.52rem;
       transition:all .22s;flex-shrink:0;
     }
     .mcard.active.local .check-ring{background:var(--local);border-color:var(--local);color:#000;font-weight:900}
     .mcard.active.cloud .check-ring{background:var(--cloud);border-color:var(--cloud);color:#000;font-weight:900}
 
     /* shimmer */
-    .sk{border-radius:9px;height:56px;
+    .sk{border-radius:9px;height:50px;
       background:linear-gradient(90deg,rgba(255,255,255,.04) 25%,rgba(255,255,255,.08) 50%,rgba(255,255,255,.04) 75%);
       background-size:200% 100%;animation:sk 1.5s infinite}
     @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
@@ -142,87 +142,208 @@
     /* ── TASK INPUT ──────────────────────────────── */
     .inp-wrap{position:relative}
     textarea{
-      width:100%;height:72px;resize:none;
+      width:100%;height:65px;resize:none;
       background:var(--inp);border:1px solid var(--border);
       color:var(--tx);border-radius:10px;
-      padding:10px 38px 10px 12px;
-      font-family:inherit;font-size:.85rem;outline:none;
+      padding:9px 38px 9px 11px;
+      font-family:inherit;font-size:.83rem;outline:none;
       transition:border-color .2s,box-shadow .2s;
-      box-sizing:border-box;
     }
     textarea:focus{border-color:var(--p);box-shadow:0 0 0 2.5px var(--p-glow)}
     textarea::placeholder{color:var(--tx3)}
     #micBtn{
-      position:absolute;top:9px;right:9px;
+      position:absolute;top:8px;right:8px;
       background:none;border:none;cursor:pointer;
-      font-size:1.05rem;padding:4px;color:var(--tx3);
+      font-size:1rem;padding:4px;color:var(--tx3);
       border-radius:6px;transition:.2s;
     }
     #micBtn:hover{color:var(--p);background:rgba(139,92,246,.12)}
     #micBtn.rec{color:var(--danger);animation:blink 1s infinite}
 
     /* ── MODE ROW ────────────────────────────────── */
-    .mode-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .mode-row{display:flex;gap:7px;align-items:center;margin-top:7px}
     select{
       flex:1;background:var(--inp);border:1px solid var(--border);
-      color:var(--tx);border-radius:8px;padding:6px 8px;font-size:.78rem;outline:none;cursor:pointer;
+      color:var(--tx);border-radius:8px;padding:5px 8px;font-size:.76rem;outline:none;cursor:pointer;
     }
     select:focus{border-color:var(--s)}
 
     /* ── BUTTONS ─────────────────────────────────── */
-    .btn-row{display:flex;gap:8px;margin-top:10px}
+    .btn-row{display:flex;gap:7px;margin-top:8px}
     .run-btn{
-      flex:1;padding:11px;
+      flex:1;padding:10px;
       background:linear-gradient(130deg,var(--p),var(--p2));
       border:none;color:#fff;border-radius:9px;cursor:pointer;
-      font-weight:700;font-size:.88rem;
+      font-weight:700;font-size:.85rem;
       box-shadow:0 4px 14px rgba(99,102,241,.38);
       transition:all .2s;display:flex;align-items:center;justify-content:center;gap:7px;
     }
     .run-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(99,102,241,.5)}
     .run-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
     .stp-btn{
-      padding:11px 14px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.45);
-      color:#f87171;border-radius:9px;cursor:pointer;font-weight:700;font-size:.85rem;
+      padding:10px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.45);
+      color:#f87171;border-radius:9px;cursor:pointer;font-weight:700;font-size:.82rem;
       transition:.2s;display:none;white-space:nowrap;
     }
     .stp-btn:hover{background:rgba(239,68,68,.22);color:#fff}
 
-    /* ── OUTPUT ──────────────────────────────────── */
-    .out-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-    .out-label{font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;color:var(--tx3)}
+    /* ── LIVE STATUS BAR ─────────────────────────── */
+    .status-bar{
+      display:flex;align-items:center;gap:8px;
+      padding:7px 10px;border-radius:9px;
+      background:rgba(255,255,255,.03);border:1px solid var(--border);
+      font-size:.72rem;color:var(--tx2);
+    }
+    .status-bar.running{
+      border-color:rgba(139,92,246,.4);background:rgba(139,92,246,.07);
+      animation:pulse-border 2s ease-in-out infinite;
+    }
+    @keyframes pulse-border{0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,.3)}50%{box-shadow:0 0 0 4px rgba(139,92,246,.0)}}
+    .status-icon{font-size:.9rem}
+    .status-text{flex:1;line-height:1.3}
+    .status-step{font-size:.62rem;color:var(--p);font-weight:700;white-space:nowrap}
     .badge{
-      font-size:.6rem;padding:2px 8px;border-radius:4px;font-weight:700;
+      font-size:.58rem;padding:2px 8px;border-radius:4px;font-weight:700;
       background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.2);color:#a5b4fc;
+      transition:all .3s;
     }
     .badge.running{background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.3);color:var(--local);animation:blink .8s infinite}
-    #output{font-size:.83rem;color:#e2e8f0;line-height:1.55;min-height:30px;white-space:pre-wrap;word-break:break-word}
+    .badge.error{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--danger)}
+    .spin{animation:spin .7s linear infinite;display:inline-block}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* ── STEP BREADCRUMBS ────────────────────────── */
+    .steps-trail{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+    .step-chip{
+      font-size:.58rem;padding:2px 7px;border-radius:99px;
+      background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25);color:#c4b5fd;
+      display:flex;align-items:center;gap:3px;
+    }
+    .step-chip.done{background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.3);color:var(--local)}
+    .step-chip.active{background:rgba(139,92,246,.2);border-color:rgba(139,92,246,.5);color:#ddd6fe;animation:blink .9s infinite}
+
+    /* ── OUTPUT ──────────────────────────────────── */
+    .out-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+    .out-label{font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--tx3);display:flex;align-items:center;gap:5px}
+    #output{font-size:.81rem;color:#e2e8f0;line-height:1.55;min-height:28px;white-space:pre-wrap;word-break:break-word}
+
+    /* ── LIVE CONSOLE ────────────────────────────── */
+    .console-panel{background:rgba(0,0,0,.5);border:1px solid var(--border);border-radius:12px;padding:10px}
+    .console-hdr{
+      display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;
+      font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--p);font-weight:700;
+    }
+    .live-dot{
+      width:5px;height:5px;border-radius:50%;background:var(--ok);
+      display:inline-block;animation:blink 1.5s infinite;margin-left:4px;
+    }
+    .console-lines{
+      max-height:130px;overflow-y:auto;
+      font-family:'Cascadia Code','Fira Code',monospace;font-size:.68rem;
+    }
+    .cline{display:flex;gap:7px;margin-bottom:2px;line-height:1.5}
+    .ctime{color:var(--tx3);opacity:.55;white-space:nowrap;flex-shrink:0}
+    .cmsg-info{color:#c4b5fd}
+    .cmsg-act{color:var(--s)}
+    .cmsg-llm{color:var(--local)}
+    .cmsg-err{color:var(--danger)}
+    .cmsg-crit{color:var(--danger);font-weight:700}
 
     /* ── HISTORY OVERLAY ─────────────────────────── */
     #histOverlay{
       display:none;position:fixed;inset:0;z-index:99;
       background:rgba(5,10,24,.96);backdrop-filter:blur(20px);
-      padding:14px;overflow-y:auto;
+      padding:12px;overflow-y:auto;
     }
-    .hist-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .hist-title{font-size:.9rem;font-weight:700;color:var(--p)}
-    .close-hist{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:7px;color:var(--tx2);padding:5px 10px;cursor:pointer;font-size:.75rem}
+    .hist-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .hist-title{font-size:.88rem;font-weight:700;color:var(--p)}
+    .close-hist{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:7px;color:var(--tx2);padding:5px 10px;cursor:pointer;font-size:.72rem}
     .hist-item{
-      padding:10px 12px;background:rgba(255,255,255,.03);border:1px solid var(--border);
-      border-radius:8px;margin-bottom:7px;font-size:.78rem;cursor:pointer;
-      display:flex;justify-content:space-between;align-items:center;
-      transition:.18s;
+      padding:9px 11px;background:rgba(255,255,255,.03);border:1px solid var(--border);
+      border-radius:8px;margin-bottom:6px;font-size:.75rem;cursor:pointer;
+      display:flex;justify-content:space-between;align-items:flex-start;
+      transition:.18s;gap:8px;
     }
     .hist-item:hover{background:rgba(255,255,255,.07)}
-    .hist-cmd{color:var(--tx);flex:1;margin-right:8px;word-break:break-word}
-    .hist-meta{font-size:.62rem;color:var(--tx3);white-space:nowrap;text-align:right}
+    .hist-cmd{color:var(--tx);flex:1;word-break:break-word;line-height:1.4}
+    .hist-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+    .hist-meta{font-size:.6rem;color:var(--tx3);white-space:nowrap}
     .hist-model-tag{
-      font-size:.58rem;padding:1px 6px;border-radius:4px;margin-top:3px;display:inline-block;
+      font-size:.56rem;padding:1px 6px;border-radius:4px;display:inline-block;
       background:var(--local-dim);color:var(--local);border:1px solid var(--local-b);
     }
     .hist-model-tag.cloud{background:var(--cloud-dim);color:var(--cloud);border-color:var(--cloud-b)}
-    .clear-btn{width:100%;padding:8px;margin-bottom:10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);color:#f87171;border-radius:8px;cursor:pointer;font-size:.78rem;transition:.18s}
+    .hist-del{
+      background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);
+      color:#f87171;border-radius:5px;padding:2px 6px;cursor:pointer;
+      font-size:.6rem;transition:.15s;flex-shrink:0;
+    }
+    .hist-del:hover{background:rgba(239,68,68,.2)}
+    .clear-btn{width:100%;padding:8px;margin-bottom:9px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);color:#f87171;border-radius:8px;cursor:pointer;font-size:.75rem;transition:.18s;display:flex;align-items:center;justify-content:center;gap:6px}
     .clear-btn:hover{background:rgba(239,68,68,.18)}
+    .hist-empty{color:var(--tx3);font-size:.75rem;text-align:center;padding:16px}
+
+    /* ── SUBTASKS ROADMAP ────────────────────────── */
+    .subtask-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 11px;
+      border-radius: 8px;
+      background: rgba(255,255,255,.02);
+      border: 1px solid var(--border);
+      font-size: .74rem;
+      transition: all .25s ease;
+      margin-bottom: 4px;
+    }
+    .subtask-item.pending {
+      opacity: .45;
+    }
+    .subtask-item.active {
+      border-color: var(--p);
+      background: rgba(139,92,246,.06);
+      box-shadow: 0 0 10px rgba(139,92,246,.15);
+      animation: pulse-active 2s infinite ease-in-out;
+    }
+    .subtask-item.completed {
+      border-color: var(--ok);
+      background: rgba(16,185,129,.05);
+      color: var(--tx2);
+    }
+    @keyframes pulse-active {
+      0%, 100% { border-color: rgba(139,92,246,.3); }
+      50% { border-color: rgba(139,92,246,.8); }
+    }
+    .subtask-icon {
+      font-size: .78rem;
+      flex-shrink: 0;
+    }
+    .subtask-title {
+      flex: 1;
+      font-weight: 500;
+    }
+    .subtask-badge {
+      font-size: .52rem;
+      font-weight: 800;
+      padding: 1.5px 5px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .subtask-badge.pending {
+      background: rgba(255,255,255,.05);
+      color: var(--tx3);
+    }
+    .subtask-badge.active {
+      background: rgba(139,92,246,.12);
+      color: var(--p);
+      border: 1px solid rgba(139,92,246,.3);
+    }
+    .subtask-badge.completed {
+      background: rgba(16,185,129,.12);
+      color: var(--ok);
+      border: 1px solid rgba(16,185,129,.3);
+    }
   </style>
 </head>
 <body>
@@ -260,7 +381,7 @@
     <div class="panel">
       <div class="sec-label"><i class="fas fa-terminal"></i> Task</div>
       <div class="inp-wrap">
-        <textarea id="taskInput" placeholder="What should I do? e.g. 'Search Google for AI news and summarise'"></textarea>
+        <textarea id="taskInput" placeholder="What should I do? e.g. 'Open YouTube and search for Believer'"></textarea>
         <button id="micBtn" title="Voice Input"><i class="fas fa-microphone"></i></button>
       </div>
       <div class="mode-row">
@@ -270,7 +391,7 @@
           <option value="read">📖 Read</option>
           <option value="scan">🔍 Scan</option>
           <option value="write">✏️ Write</option>
-          <option value="search_execute">🌐 Search & Execute</option>
+          <option value="search_execute">🌐 Search &amp; Execute</option>
           <option value="coding">💻 Coding</option>
         </select>
       </div>
@@ -280,13 +401,41 @@
       </div>
     </div>
 
-    <!-- OUTPUT -->
+    <!-- SUBTASKS ROADMAP -->
+    <div class="panel" id="subtaskPanel" style="display:none;">
+      <div class="sec-label"><i class="fas fa-list-check"></i> Subtask Roadmap</div>
+      <div id="subtaskList"></div>
+    </div>
+
+    <!-- LIVE STATUS -->
+    <div class="status-bar" id="statusBar">
+      <span class="status-icon" id="statusIcon">🟢</span>
+      <span class="status-text" id="statusText">Ready to assist</span>
+      <span class="status-step" id="stepCounter"></span>
+      <span class="badge" id="statBadge">IDLE</span>
+    </div>
+    <div class="steps-trail" id="stepTrail"></div>
+
+    <!-- OUTPUT / ACTIVITY -->
     <div class="panel">
       <div class="out-hdr">
         <span class="out-label"><i class="fas fa-wave-square"></i> Activity</span>
-        <span class="badge" id="statBadge">IDLE</span>
+        <button id="clearOutputBtn" style="background:none;border:none;color:var(--tx3);font-size:.62rem;cursor:pointer;padding:2px 6px;border-radius:4px;" title="Clear output">
+          <i class="fas fa-trash-can"></i>
+        </button>
       </div>
       <div id="output">Waiting for instructions…</div>
+    </div>
+
+    <!-- LIVE CONSOLE -->
+    <div class="console-panel">
+      <div class="console-hdr">
+        <span>📟 Live Console <span class="live-dot"></span></span>
+        <span style="font-size:.55rem;opacity:.4;">REAL-TIME</span>
+      </div>
+      <div class="console-lines" id="consoleLines">
+        <div class="cline"><span class="ctime">--:--:--</span><span class="cmsg-info">Waiting for activity…</span></div>
+      </div>
     </div>
 
   </div><!-- /body -->
@@ -297,7 +446,7 @@
       <span class="hist-title"><i class="fas fa-clock-rotate-left"></i> Command History</span>
       <button class="close-hist" id="closeHist"><i class="fas fa-xmark"></i> Close</button>
     </div>
-    <button class="clear-btn" id="clearHistBtn"><i class="fas fa-trash"></i> Clear All</button>
+    <button class="clear-btn" id="clearHistBtn"><i class="fas fa-trash"></i> Clear All History</button>
     <div id="histList"></div>
   </div>
 

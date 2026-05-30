@@ -1,41 +1,62 @@
 // ═══════════════════════════════════════════════════════════
-//  AI Agent Pro — Side Panel JS
-//  Supports: Gemma2 (local), Qwen2.5 (local), Gemini Cloud
+//  AI Agent Pro — Side Panel JS  (v2 — Full Feature Build)
+//  Features: agentic loop, live console, voice in/out,
+//            step breadcrumbs, live status, history w/ delete
 // ═══════════════════════════════════════════════════════════
 
 const API = "http://127.0.0.1:5000";
 
 // ── ELEMENTS ───────────────────────────────────────────────
-const taskInput  = document.getElementById("taskInput");
-const modeSelect = document.getElementById("modeSelect");
-const runBtn     = document.getElementById("runBtn");
-const stopBtn    = document.getElementById("stopBtn");
-const output     = document.getElementById("output");
-const statBadge  = document.getElementById("statBadge");
-const micBtn     = document.getElementById("micBtn");
-const voiceTogBtn= document.getElementById("voiceTogBtn");
-const histBtn    = document.getElementById("histBtn");
-const histOverlay= document.getElementById("histOverlay");
-const closeHist  = document.getElementById("closeHist");
+const taskInput   = document.getElementById("taskInput");
+const modeSelect  = document.getElementById("modeSelect");
+const runBtn      = document.getElementById("runBtn");
+const stopBtn     = document.getElementById("stopBtn");
+const output      = document.getElementById("output");
+const statBadge   = document.getElementById("statBadge");
+const statusBar   = document.getElementById("statusBar");
+const statusIcon  = document.getElementById("statusIcon");
+const statusText  = document.getElementById("statusText");
+const stepCounter = document.getElementById("stepCounter");
+const stepTrail   = document.getElementById("stepTrail");
+const micBtn      = document.getElementById("micBtn");
+const voiceTogBtn = document.getElementById("voiceTogBtn");
+const histBtn     = document.getElementById("histBtn");
+const histOverlay = document.getElementById("histOverlay");
+const closeHist   = document.getElementById("closeHist");
 const clearHistBtn= document.getElementById("clearHistBtn");
-const histList   = document.getElementById("histList");
-const modelPill  = document.getElementById("modelPill");
-const pillTxt    = document.getElementById("pillTxt");
+const histList    = document.getElementById("histList");
+const modelPill   = document.getElementById("modelPill");
+const pillTxt     = document.getElementById("pillTxt");
+const consoleLines= document.getElementById("consoleLines");
+const subtaskPanel = document.getElementById("subtaskPanel");
+const subtaskList  = document.getElementById("subtaskList");
 
 // ── STATE ──────────────────────────────────────────────────
 let isRunning     = false;
 let prevCtx       = "";
 let lastAct       = "";
 let repeatCount   = 0;
+let stepNumber    = 0;
 let voiceEnabled  = true;
-let selectedModel = "gemma2";   // default: local Gemma2
+let selectedModel = "gemma2";
 let allModels     = [];
+let stepHistory   = [];    // [{action, caption, done}]
+let currentSubtasks = [];  // subtasks division roadmap
+let logPollTimer  = null;
+let lastLogCount  = 0;
 
 // ── MODEL META ─────────────────────────────────────────────
 const MODEL_META = {
   "gemma2":       { icon: "🦙", name: "Gemma 2",    sub: "Google · 5.4 GB · Offline",  type: "local" },
   "qwen2.5":      { icon: "⚡", name: "Qwen 2.5",   sub: "Alibaba · 397 MB · Turbo",   type: "local" },
   "gemini-cloud": { icon: "✨", name: "Gemini 2.5", sub: "Google Cloud · Latest",       type: "cloud" },
+};
+
+// ── ACTION META (for step chips) ───────────────────────────
+const ACTION_ICONS = {
+  open_new_tab: "🌐", navigate: "🌐", click: "👆", type: "⌨️",
+  key: "↵", scroll: "📜", wait: "⏳", chat: "💬", stop: "🛑",
+  coding: "💻", search: "🔍", close_tab: "❌", switch_tab: "🔄"
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -47,14 +68,13 @@ async function loadModels() {
     allModels = await r.json();
     renderModels();
   } catch (e) {
-    // Backend offline — show stubs
     allModels = [
       { id: "gemma2",       name: "Gemma 2",    badge: "LOCAL", provider: "ollama", available: false },
       { id: "qwen2.5",      name: "Qwen 2.5",   badge: "LOCAL", provider: "ollama", available: false },
       { id: "gemini-cloud", name: "Gemini 2.5", badge: "CLOUD", provider: "vertex", available: false },
     ];
     renderModels();
-    output.textContent = "⚠️ Backend offline. Start app.py first.";
+    addConsoleLine("WARN", "Backend offline — start app.py first");
   }
 }
 
@@ -70,8 +90,7 @@ function renderModels() {
 
     const card = document.createElement("div");
     card.className = [
-      "mcard",
-      isLocal ? "local" : "cloud",
+      "mcard", isLocal ? "local" : "cloud",
       isAct   ? "active"   : "",
       !avail  ? "disabled" : ""
     ].filter(Boolean).join(" ");
@@ -105,14 +124,99 @@ function renderModels() {
 }
 
 function updatePill() {
-  const m  = allModels.find(x => x.id === selectedModel) || {};
   const mt = MODEL_META[selectedModel] || {};
   modelPill.className = "model-pill" + (mt.type === "cloud" ? " cloud" : "");
   pillTxt.textContent = (mt.name || selectedModel) + (mt.type === "local" ? " · Offline" : " · Cloud");
 }
 
 // ═══════════════════════════════════════════════════════════
-//  2. AGENT LOOP
+//  2. LIVE STATUS HELPERS
+// ═══════════════════════════════════════════════════════════
+function setUIBusy(busy) {
+  runBtn.disabled       = busy;
+  runBtn.style.display  = busy ? "none"  : "flex";
+  stopBtn.style.display = busy ? "block" : "none";
+  statBadge.className   = busy ? "badge running" : "badge";
+  statBadge.textContent = busy ? "RUNNING" : "IDLE";
+  statusBar.className   = busy ? "status-bar running" : "status-bar";
+  if (!busy) {
+    statusIcon.textContent = "🟢";
+    stepCounter.textContent = "";
+  }
+}
+
+function updateStatus(icon, text, step) {
+  statusIcon.textContent = icon;
+  statusText.textContent = text;
+  if (step !== undefined) stepCounter.textContent = `Step ${step}`;
+}
+
+// Action → human label
+function actionLabel(action, value) {
+  const labels = {
+    open_new_tab: `Open ${(value||"").replace("https://","").split("/")[0]}`,
+    navigate:     `Navigate`,
+    click:        `Click element`,
+    type:         `Type "${(value||"").slice(0,20)}${(value||"").length>20?"…":""}"`,
+    key:          `Press ${value||"Enter"}`,
+    scroll:       `Scroll ${value||"down"}`,
+    wait:         `Wait…`,
+    chat:         `Done`,
+    stop:         `Complete`,
+    close_tab:    `Close tab`,
+    switch_tab:   `Switch tab`,
+  };
+  return labels[action] || action;
+}
+
+// ── STEP TRAIL ──────────────────────────────────────────────
+function addStepChip(action, caption, isActive) {
+  const chip = document.createElement("div");
+  chip.className = "step-chip" + (isActive ? " active" : "");
+  chip.innerHTML = `${ACTION_ICONS[action] || "▶"} ${caption || actionLabel(action)}`;
+  chip.dataset.action = action;
+  stepTrail.appendChild(chip);
+  return chip;
+}
+
+function markLastChipDone() {
+  const chips = stepTrail.querySelectorAll(".step-chip.active");
+  chips.forEach(c => { c.classList.remove("active"); c.classList.add("done"); });
+}
+
+// ── SUBTASKS ROADMAP RENDERER ───────────────────────────────
+function renderSubtasks() {
+  if (!currentSubtasks || !currentSubtasks.length) {
+    subtaskPanel.style.display = "none";
+    return;
+  }
+  
+  subtaskPanel.style.display = "block";
+  subtaskList.innerHTML = "";
+  
+  currentSubtasks.forEach((st, idx) => {
+    const item = document.createElement("div");
+    const status = (st.status || "pending").toLowerCase();
+    item.className = `subtask-item ${status}`;
+    
+    let icon = '<i class="far fa-circle" style="color:var(--tx3)"></i>';
+    if (status === "completed") {
+      icon = '<i class="fas fa-circle-check" style="color:var(--ok)"></i>';
+    } else if (status === "active") {
+      icon = '<i class="fas fa-spinner spin" style="color:var(--p)"></i>';
+    }
+    
+    item.innerHTML = `
+      <span class="subtask-icon">${icon}</span>
+      <span class="subtask-title">${escHtml(st.title || `Subtask ${idx + 1}`)}</span>
+      <span class="subtask-badge ${status}">${status}</span>
+    `;
+    subtaskList.appendChild(item);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  3. AGENT LOOP
 // ═══════════════════════════════════════════════════════════
 async function runAgent(command) {
   if (!command || isRunning) return;
@@ -121,38 +225,112 @@ async function runAgent(command) {
   prevCtx     = "";
   lastAct     = "";
   repeatCount = 0;
+  stepNumber  = 0;
+  stepHistory = [];
+  currentSubtasks = [];
+  renderSubtasks();
+  stepTrail.innerHTML = "";
 
   setUIBusy(true);
-  output.textContent = "🚀 Initialising…";
+  output.textContent = "🚀 Initialising task…";
+  updateStatus("⚡", "Starting agent…");
+  addConsoleLine("INFO", `New task: "${command.slice(0,60)}"`);
 
   while (isRunning) {
     try {
-      // A. CAPTURE PAGE
+      stepNumber++;
+
+      // A. CAPTURE PAGE — text + URL + visible links
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !isRunning) break;
 
-      let context = "";
+      let context  = "";
+      let pageUrl  = tab.url || "";
+      let pageLinks = [];
       try {
         const res = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => document.body?.innerText?.slice(0, 8000) || ""
+          target: { tabId: tab.id, allFrames: true },
+          func: () => {
+            function getDeepInnerText(root) {
+              if (!root) return "";
+              if (root.nodeType === 3) return root.textContent;
+              if (root.nodeType === 1) {
+                const style = window.getComputedStyle(root);
+                if (style.display === 'none' || style.visibility === 'hidden') return "";
+              }
+              let text = "";
+              for (const child of root.childNodes) {
+                text += getDeepInnerText(child);
+              }
+              if (root.shadowRoot) {
+                text += " " + getDeepInnerText(root.shadowRoot);
+              }
+              return text;
+            }
+
+            function getDeepElements(selector, root = document) {
+              let list = [...root.querySelectorAll(selector)];
+              const elements = root.querySelectorAll('*');
+              for (const el of elements) {
+                if (el.shadowRoot) {
+                  list = list.concat(getDeepElements(selector, el.shadowRoot));
+                }
+              }
+              return list;
+            }
+
+            const text  = getDeepInnerText(document.body).slice(0, 3000);
+            const selStr = "a[href], [role='link'], [data-tooltip], button, input, textarea, label, [role='checkbox'], [role='radio']";
+            const links = getDeepElements(selStr)
+              .slice(0, 40)
+              .map(el => {
+                const inner = (el.innerText || el.value || el.getAttribute("data-tooltip") || el.title || "").trim().slice(0, 60);
+                return {
+                  text:    inner,
+                  href:    el.href || el.getAttribute("href") || "",
+                  tooltip: el.getAttribute("data-tooltip") || "",
+                  sel:     el.getAttribute("data-tooltip")
+                             ? `[data-tooltip="${el.getAttribute("data-tooltip")}"]`
+                             : (el.id ? `#${el.id}` : (el.className?.split(" ")[0] ? `.${el.className.split(" ")[0]}` : el.tagName.toLowerCase()))
+                };
+              })
+              .filter(l => l.text || l.tooltip);
+            return { text, links, url: window.location.href };
+          }
         });
-        context = res[0]?.result || "";
-      } catch (_) {}
+        let mergedText = "";
+        let mergedLinks = [];
+        res.forEach(frame => {
+          const r = frame.result || {};
+          if (r.text) mergedText += "\n--- Frame: " + (r.url || "subframe") + " ---\n" + r.text + "\n";
+          if (r.links) mergedLinks = mergedLinks.concat(r.links);
+        });
+
+        context   = mergedText.slice(0, 6000);
+        pageLinks = mergedLinks;
+      } catch (err) {
+        console.error("Frame capture error:", err);
+      }
 
       // B. BUILD PAYLOAD
       const payload = {
         command,
         model:            selectedModel,
         context,
+        page_url:         pageUrl,
+        page_links:       pageLinks.slice(0, 30),   // top 30 links with selectors
         previous_context: prevCtx,
         last_action:      lastAct,
         repeat_count:     repeatCount,
+        step_number:      stepNumber,
+        action_history:   stepHistory,
+        subtasks:         currentSubtasks,
       };
       const instr = modeSelect.value;
       if (instr) payload.instruction = instr;
 
-      console.log(`📡 [Agent] model=${selectedModel} action=${lastAct} repeat=${repeatCount}`);
+      updateStatus("🧠", `Thinking… (Step ${stepNumber})`, stepNumber);
+      addConsoleLine("INFO", `[Step ${stepNumber}] Calling brain | last_action="${lastAct}"`);
 
       // C. CALL BACKEND
       const resp = await fetch(`${API}/agent`, {
@@ -172,11 +350,16 @@ async function runAgent(command) {
       }
 
       const data   = await resp.json();
+      if (data && data.subtasks) {
+        currentSubtasks = data.subtasks;
+        renderSubtasks();
+      }
       const action = (data?.action || "").trim().toLowerCase();
 
       // D. VALIDATE
-      const VALID = ["open_new_tab","click","type","scroll","close_tab","switch_tab","wait","stop","navigate","chat"];
+      const VALID = ["open_new_tab","click","type","key","scroll","close_tab","switch_tab","wait","stop","navigate","chat","coding"];
       if (!action || !VALID.includes(action)) {
+        addConsoleLine("WARN", `Unknown action: "${action}" — skipping`);
         await sleep(2000); continue;
       }
 
@@ -186,26 +369,51 @@ async function runAgent(command) {
       if (action === lastAct) repeatCount++;
       else repeatCount = 0;
 
-      // F. EXECUTE
+      // F. UI UPDATE
+      markLastChipDone();
+      const chip = addStepChip(action, data.caption, true);
+      updateStatus(ACTION_ICONS[action] || "▶", data.caption || actionLabel(action, data.value), stepNumber);
+      output.textContent = data.caption || `Step ${stepNumber}: ${actionLabel(action, data.value)}`;
+      addConsoleLine("ACT", `[Step ${stepNumber}] ${action.toUpperCase()} | conf=${data.confidence?.toFixed(2)} | "${(data.caption||"").slice(0,50)}"`);
+
+      // G. EXECUTE
       await executeAction(data);
 
-      // G. STOP CONDITIONS
-      if (action === "stop" || data.is_goal_achieved || repeatCount >= 3) {
+      // Record completed action in stepHistory (sliding window of max 5 steps)
+      stepHistory.push({
+        step:    stepNumber,
+        action:  action,
+        value:   data.value || "",
+        caption: data.caption || ""
+      });
+      if (stepHistory.length > 5) {
+        stepHistory.shift(); // delete the 1st step if 6th step occurs
+      }
+
+      // H. STOP CONDITIONS
+      if (action === "stop" || data.is_goal_achieved || repeatCount >= 5) {
+        markLastChipDone();
         const msg = data.caption || data.value || "✅ Task complete!";
         output.textContent = msg;
+        updateStatus("✅", "Goal achieved!", stepNumber);
+        addConsoleLine("INFO", `Task finished in ${stepNumber} steps`);
         if (voiceEnabled) speak(msg);
         isRunning = false;
         break;
       }
 
-      // H. ADVANCE STATE
+      // I. ADVANCE STATE
       prevCtx = context;
       lastAct = action;
-      await sleep(3000);
+      await sleep(2500);
 
     } catch (err) {
       console.error("Agent error:", err);
       output.textContent = `❌ Error: ${err.message}`;
+      updateStatus("❌", `Error: ${err.message.slice(0,40)}`);
+      addConsoleLine("ERROR", err.message);
+      statBadge.className   = "badge error";
+      statBadge.textContent = "ERROR";
       isRunning = false;
       break;
     }
@@ -215,14 +423,11 @@ async function runAgent(command) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  3. ACTION EXECUTOR
+//  4. ACTION EXECUTOR
 // ═══════════════════════════════════════════════════════════
 async function executeAction(data) {
   const action = (data?.action || "").trim().toLowerCase();
   const { selector, value, caption } = data;
-
-  output.textContent = caption || `Executing: ${action}…`;
-  statBadge.textContent = action.toUpperCase();
 
   if (value && (value.startsWith("chrome://") || value.startsWith("chrome-extension://"))) return;
 
@@ -231,11 +436,13 @@ async function executeAction(data) {
       case "open_new_tab":
       case "navigate":
         await chrome.tabs.create({ url: value });
+        await sleep(2500);  // Wait for tab to load
         break;
 
       case "click":
       case "type":
       case "scroll":
+      case "key":
         await runScript(action, data);
         break;
 
@@ -249,15 +456,23 @@ async function executeAction(data) {
         break;
 
       case "wait":
-        await sleep(1500);
+        await sleep(2000);
         break;
 
       case "chat":
         output.textContent = value || "Agent response received.";
         if (voiceEnabled) speak(output.textContent);
         break;
+
+      case "coding":
+        output.textContent = `💻 Coding task: ${value || "generating code…"}`;
+        await runScript("type", data);
+        break;
     }
-  } catch (e) { console.error("Executor:", e) }
+  } catch (e) {
+    console.error("Executor:", e);
+    addConsoleLine("ERROR", `Executor: ${e.message}`);
+  }
 }
 
 // ── DOM SCRIPT ─────────────────────────────────────────────
@@ -266,24 +481,90 @@ async function runScript(type, data) {
   if (!tab) return;
 
   await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
+    target: { tabId: tab.id, allFrames: true },
     args:   [type, data],
     func: (action, params) => {
-      function findEl() {
-        let el = document.querySelector(params.selector);
-        if (!el && params.value && ["click","type"].includes(action)) {
-          const low = params.value.toLowerCase();
-          el = [...document.querySelectorAll("button,a,div,span,input,textarea")]
-                .find(e => (e.innerText || e.value || "").toLowerCase().includes(low));
-        }
-        if (!el && action === "type") el = document.querySelector("textarea,input,[contenteditable='true']");
-        return el;
+      function isVisible(el) {
+        if (!el) return false;
+        if (el.type === 'hidden') return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
       }
+
+      function getDeepElements(selector, root = document) {
+        let list = [...root.querySelectorAll(selector)];
+        const elements = root.querySelectorAll('*');
+        for (const el of elements) {
+          if (el.shadowRoot) {
+            list = list.concat(getDeepElements(selector, el.shadowRoot));
+          }
+        }
+        return list;
+      }
+
+      function findEl() {
+        if (params.selector) {
+          const els = getDeepElements(params.selector).filter(isVisible);
+          if (els.length) return els[0];
+        }
+
+        if (params.value && ["click","type"].includes(action)) {
+          const low = params.value.toLowerCase();
+          const allEls = getDeepElements("button,a,div,span,input,textarea,label,p,h1,h2,h3,h4,li,option");
+          const found = allEls
+            .filter(isVisible)
+            .find(e => (e.innerText || e.value || "").toLowerCase().includes(low));
+          if (found) return found;
+        }
+        
+        if (action === "type") {
+          const inputs = getDeepElements("textarea,input:not([type='hidden']),[contenteditable='true']")
+                .filter(isVisible);
+          if (inputs.length) return inputs[0];
+        }
+        return null;
+      }
+
+      function pressKey(el, key) {
+        const kc = key === "Enter" ? 13 : key.charCodeAt(0);
+        const opts = { key, code: key, keyCode: kc, which: kc, bubbles: true, cancelable: true };
+        el.dispatchEvent(new KeyboardEvent("keydown",  opts));
+        el.dispatchEvent(new KeyboardEvent("keypress", opts));
+        el.dispatchEvent(new KeyboardEvent("keyup",    opts));
+        
+        if (key === "Enter") {
+          const form = el.form || el.closest("form");
+          if (form) {
+            try {
+              if (typeof form.requestSubmit === "function") {
+                form.requestSubmit();
+              } else {
+                form.submit();
+              }
+            } catch (e) {
+              form.submit();
+            }
+          }
+        }
+      }
+
+      if (action === "key") {
+        const active = document.activeElement || document.querySelector("input:focus,textarea:focus,textarea,input");
+        if (active) pressKey(active, params.value || "Enter");
+        return;
+      }
+
+      if (action === "scroll") { window.scrollBy(0, params.value === "up" ? -500 : 500); return; }
+
       const el = findEl();
-      if (!el && action !== "scroll") return;
+      if (!el) return;
+
       try {
-        if (action === "click") { el.click(); return; }
-        if (action === "scroll") { window.scrollBy(0, 500); return; }
+        if (action === "click") {
+          el.focus(); el.click(); return;
+        }
         if (action === "type") {
           el.focus();
           if (el.classList?.contains("CodeMirror") && el.CodeMirror) {
@@ -293,7 +574,15 @@ async function runScript(type, data) {
           } else {
             el.value = ""; el.value = params.value;
           }
-          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("input",  { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          // Auto-Enter for search fields
+          const isSearch = ["search","q"].some(k =>
+            (params.selector||"").includes(k) ||
+            (el.name||"").includes(k) ||
+            (el.id||"").includes(k)
+          ) || el.type === "search";
+          if (isSearch) setTimeout(() => pressKey(el, "Enter"), 350);
         }
       } catch (_) {}
     }
@@ -301,7 +590,61 @@ async function runScript(type, data) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  4. VOICE
+//  5. LIVE CONSOLE
+// ═══════════════════════════════════════════════════════════
+function msgClass(msg) {
+  if (msg.includes("[CRITICAL]")) return "cmsg-crit";
+  if (msg.includes("[ERROR]"))    return "cmsg-err";
+  if (msg.includes("[ACTION]"))   return "cmsg-act";
+  if (msg.includes("[LLM]"))      return "cmsg-llm";
+  return "cmsg-info";
+}
+
+function addConsoleLine(level, text) {
+  const time = new Date().toLocaleTimeString("en-GB");
+  const cls  = msgClass(`[${level}]`);
+  const line = document.createElement("div");
+  line.className = "cline";
+  line.innerHTML = `<span class="ctime">[${time}]</span><span class="${cls}">[${level}] ${escHtml(text)}</span>`;
+  consoleLines.appendChild(line);
+  if (consoleLines.children.length > 80) consoleLines.removeChild(consoleLines.firstChild);
+  consoleLines.scrollTop = consoleLines.scrollHeight;
+}
+
+async function fetchServerLogs() {
+  try {
+    const r    = await fetch(`${API}/api/logs`);
+    const logs = await r.json();
+    if (logs.length === lastLogCount) return;
+
+    const newLogs = logs.slice(lastLogCount);
+    lastLogCount  = logs.length;
+
+    newLogs.forEach(l => {
+      const cls  = msgClass(l.msg);
+      const line = document.createElement("div");
+      line.className = "cline";
+      line.innerHTML = `<span class="ctime">[${l.time}]</span><span class="${cls}">${escHtml(l.msg)}</span>`;
+      consoleLines.appendChild(line);
+    });
+
+    if (newLogs.length) consoleLines.scrollTop = consoleLines.scrollHeight;
+    if (consoleLines.children.length > 100) {
+      while (consoleLines.children.length > 80) consoleLines.removeChild(consoleLines.firstChild);
+    }
+  } catch (_) {}
+}
+
+function startLogPolling(fast) {
+  stopLogPolling();
+  logPollTimer = setInterval(fetchServerLogs, fast ? 1000 : 3000);
+}
+function stopLogPolling() {
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  6. VOICE
 // ═══════════════════════════════════════════════════════════
 let recognition = null;
 
@@ -314,8 +657,8 @@ function normalise(t) {
 
 function speak(text) {
   if (!voiceEnabled) return;
-  const synth = window.speechSynthesis;
-  const u     = new SpeechSynthesisUtterance(text);
+  const synth  = window.speechSynthesis;
+  const u      = new SpeechSynthesisUtterance(text);
   const voices = synth.getVoices();
   u.voice = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) || voices[0];
   synth.cancel();
@@ -323,13 +666,17 @@ function speak(text) {
 }
 
 micBtn.addEventListener("click", async () => {
-  // unlock audio
   window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
 
-  if (recognition) { recognition.stop(); recognition = null; micBtn.classList.remove("rec"); return; }
+  if (recognition) {
+    recognition.stop(); recognition = null;
+    micBtn.classList.remove("rec");
+    micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+    return;
+  }
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { output.textContent = "⚠️ Speech not supported."; return; }
+  if (!SR) { output.textContent = "⚠️ Speech not supported in this browser."; return; }
 
   try {
     const s = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -338,55 +685,114 @@ micBtn.addEventListener("click", async () => {
 
   recognition = new SR();
   recognition.lang = "en-US";
-  recognition.continuous = true;
+  recognition.continuous = false;
   recognition.interimResults = true;
 
   micBtn.classList.add("rec");
+  micBtn.innerHTML = '<i class="fas fa-circle"></i>';
+  updateStatus("🎙️", "Listening…");
 
   recognition.onresult = e => {
     const last = e.results[e.results.length - 1];
     const txt  = normalise(last[0].transcript);
     taskInput.value = txt;
     if (last.isFinal) {
-      recognition.stop(); recognition = null; micBtn.classList.remove("rec");
+      recognition.stop(); recognition = null;
+      micBtn.classList.remove("rec");
+      micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
       window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+      addConsoleLine("INFO", `Voice: "${txt}"`);
       runAgent(txt);
     }
   };
-  recognition.onend = () => { recognition = null; micBtn.classList.remove("rec"); };
+  recognition.onerror = e => {
+    recognition = null;
+    micBtn.classList.remove("rec");
+    micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+    addConsoleLine("ERROR", `Mic error: ${e.error}`);
+    updateStatus("⚠️", `Mic error: ${e.error}`);
+  };
+  recognition.onend = () => {
+    recognition = null;
+    micBtn.classList.remove("rec");
+    micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+  };
   recognition.start();
 });
 
 // ═══════════════════════════════════════════════════════════
-//  5. UI HELPERS
+//  7. HISTORY
 // ═══════════════════════════════════════════════════════════
-function setUIBusy(busy) {
-  runBtn.style.display  = busy ? "none"  : "flex";
-  stopBtn.style.display = busy ? "block" : "none";
-  statBadge.className   = busy ? "badge running" : "badge";
-  statBadge.textContent = busy ? "RUNNING" : "IDLE";
-}
+histBtn.addEventListener("click", () => {
+  histOverlay.style.display = "block";
+  loadHistory();
+});
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+closeHist.addEventListener("click", () => {
+  histOverlay.style.display = "none";
+});
 
-// ── PREFERENCES ────────────────────────────────────────────
-function savePref(k, v) {
-  try { chrome.storage.local.set({ [k]: v }); } catch (_) {}
-}
-async function loadPrefs() {
+clearHistBtn.addEventListener("click", async () => {
+  clearHistBtn.textContent = "Clearing…";
   try {
-    const p = await chrome.storage.local.get(["selectedModel","voiceEnabled"]);
-    if (p.selectedModel)  selectedModel = p.selectedModel;
-    if (p.voiceEnabled !== undefined) {
-      voiceEnabled = p.voiceEnabled;
-      voiceTogBtn.className = "hbtn" + (voiceEnabled ? " act" : "");
-      voiceTogBtn.innerHTML = `<i class="fas fa-headphones"></i> ${voiceEnabled ? "Voice" : "Muted"}`;
+    await fetch(`${API}/api/history/clear`, { method: "DELETE" });
+    histList.innerHTML = '<div class="hist-empty">History cleared ✓</div>';
+  } catch (_) {
+    histList.innerHTML = '<div class="hist-empty" style="color:var(--danger)">Server unreachable</div>';
+  }
+  clearHistBtn.innerHTML = '<i class="fas fa-trash"></i> Clear All History';
+});
+
+async function loadHistory() {
+  histList.innerHTML = '<div class="hist-empty">Loading…</div>';
+  try {
+    const r    = await fetch(`${API}/history`);
+    const data = await r.json();
+
+    if (!data.length) {
+      histList.innerHTML = '<div class="hist-empty">No history yet — run a task first!</div>';
+      return;
     }
-  } catch (_) {}
+
+    histList.innerHTML = "";
+    data.forEach(item => {
+      const isCloud = item.model === "gemini-cloud";
+      const d = document.createElement("div");
+      d.className = "hist-item";
+      d.innerHTML = `
+        <div class="hist-cmd">${escHtml(item.command || "")}</div>
+        <div class="hist-right">
+          <div class="hist-meta">${item.time || ""}</div>
+          <span class="hist-model-tag ${isCloud ? "cloud" : ""}">${item.model || "unknown"}</span>
+          <button class="hist-del" data-id="${escHtml(item.id||"")}"><i class="fas fa-trash-can"></i></button>
+        </div>
+      `;
+      // Click row → load command
+      d.querySelector(".hist-cmd").addEventListener("click", () => {
+        taskInput.value = item.command;
+        histOverlay.style.display = "none";
+      });
+      // Delete single item
+      d.querySelector(".hist-del").addEventListener("click", async e => {
+        e.stopPropagation();
+        const itemId = e.currentTarget.dataset.id;
+        if (itemId) {
+          await fetch(`${API}/api/history/${itemId}`, { method: "DELETE" }).catch(()=>{});
+        }
+        d.remove();
+        if (!histList.children.length) {
+          histList.innerHTML = '<div class="hist-empty">No history yet</div>';
+        }
+      });
+      histList.appendChild(d);
+    });
+  } catch (e) {
+    histList.innerHTML = `<div class="hist-empty" style="color:var(--danger)">Could not load — is the server running?</div>`;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
-//  6. EVENT BINDINGS
+//  8. EVENT BINDINGS
 // ═══════════════════════════════════════════════════════════
 runBtn.addEventListener("click", () => {
   window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
@@ -397,6 +803,10 @@ stopBtn.addEventListener("click", () => {
   isRunning = false;
   setUIBusy(false);
   output.textContent = "⏹ Stopped by user.";
+  updateStatus("⏹", "Stopped by user");
+  addConsoleLine("WARN", "Task stopped by user");
+  markLastChipDone();
+  startLogPolling(false);
 });
 
 taskInput.addEventListener("keydown", e => {
@@ -415,62 +825,63 @@ voiceTogBtn.addEventListener("click", () => {
   if (voiceEnabled) speak("Voice enabled");
 });
 
-// ── HISTORY ────────────────────────────────────────────────
-histBtn.addEventListener("click", () => {
-  histOverlay.style.display = "block";
-  loadHistory();
+document.getElementById("clearOutputBtn").addEventListener("click", () => {
+  output.textContent = "Output cleared.";
 });
 
-closeHist.addEventListener("click", () => {
-  histOverlay.style.display = "none";
-});
+// ── Speed up log polling while running ─────────────────────
+const _origRunAgent = runAgent;
+// Patch: speed up console polling while agent runs
+const origSetUIBusy = setUIBusy;
 
-clearHistBtn.addEventListener("click", () => {
-  histList.innerHTML = '<div style="color:var(--tx3);font-size:.78rem;text-align:center;padding:20px">History cleared</div>';
-});
-
-async function loadHistory() {
-  histList.innerHTML = '<div style="color:var(--tx3);font-size:.78rem;">Loading…</div>';
-  try {
-    const r    = await fetch(`${API}/history`);
-    const data = await r.json();
-    if (!data.length) {
-      histList.innerHTML = '<div style="color:var(--tx3);font-size:.78rem;text-align:center;padding:20px">No history yet</div>';
-      return;
-    }
-    histList.innerHTML = "";
-    data.forEach(item => {
-      const isCloud = item.model === "gemini-cloud";
-      const d = document.createElement("div");
-      d.className = "hist-item";
-      d.innerHTML = `
-        <div class="hist-cmd">${escHtml(item.command)}</div>
-        <div class="hist-meta">
-          <div>${item.time || ""}</div>
-          <span class="hist-model-tag ${isCloud ? "cloud" : ""}">${item.model || "unknown"}</span>
-        </div>
-      `;
-      d.addEventListener("click", () => {
-        taskInput.value = item.command;
-        histOverlay.style.display = "none";
-      });
-      histList.appendChild(d);
-    });
-  } catch (e) {
-    histList.innerHTML = '<div style="color:var(--danger);font-size:.78rem;">Could not load history — is the server running?</div>';
-  }
-}
-
-function escHtml(s) {
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-}
+// Watch task start/stop to manage polling speed
+const busyObserver = new MutationObserver(() => {});
+runBtn.addEventListener("click", () => startLogPolling(true));
+stopBtn.addEventListener("click", () => startLogPolling(false));
 
 // ═══════════════════════════════════════════════════════════
-//  7. BOOT
+//  9. HELPERS
+// ═══════════════════════════════════════════════════════════
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function savePref(k, v) {
+  try { chrome.storage.local.set({ [k]: v }); } catch (_) {}
+}
+
+async function loadPrefs() {
+  try {
+    const p = await chrome.storage.local.get(["selectedModel","voiceEnabled"]);
+    if (p.selectedModel) selectedModel = p.selectedModel;
+    if (p.voiceEnabled !== undefined) {
+      voiceEnabled = p.voiceEnabled;
+      voiceTogBtn.className = "hbtn" + (voiceEnabled ? " act" : "");
+      voiceTogBtn.innerHTML = `<i class="fas fa-headphones"></i> ${voiceEnabled ? "Voice" : "Muted"}`;
+    }
+  } catch (_) {}
+}
+
+// Patch runAgent to manage log polling speed
+(function patchRunAgent() {
+  const orig = runAgent;
+  window.runAgent = async function(cmd) {
+    startLogPolling(true);
+    await orig(cmd);
+    startLogPolling(false);
+  };
+})();
+
+// ═══════════════════════════════════════════════════════════
+//  10. BOOT
 // ═══════════════════════════════════════════════════════════
 (async () => {
   await loadPrefs();
   await loadModels();
-  // Refresh model availability every 30 s
-  setInterval(loadModels, 30000);
+  setInterval(loadModels, 30000);  // Refresh model availability
+  startLogPolling(false);           // Start slow log poll at 3s
 })();

@@ -23,6 +23,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # OLLAMA CONFIG  (local LLM server)
 # ──────────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_TIMEOUT  = int(os.getenv("OLLAMA_TIMEOUT", "180"))   # seconds; raise if model is slow to load
 
 OLLAMA_MODELS = {
     "gemma2":   "gemma2:latest",   # local Gemini-family model
@@ -62,9 +63,21 @@ except Exception as e:
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
-LOG_QUEUE  = []
-MAX_CONTEXT = 6000
-MAX_REPEAT  = 2
+LOG_QUEUE      = []
+IN_MEM_HISTORY = []   # fallback when MongoDB is unavailable
+MAX_CONTEXT    = 6000
+MAX_REPEAT     = 2
+
+# ── LIVE TASK STATUS ──────────────────────────────────────────
+LIVE_STATUS = {
+    "running":        False,
+    "task_id":        None,
+    "command":        "",
+    "step":           0,
+    "current_action": "idle",
+    "model":          "",
+    "started_at":     None,
+}
 
 def log(level, msg):
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -82,38 +95,107 @@ SYSTEM_PROMPT = """
 SYSTEM ROLE: Autonomous Browser Execution Engine (BRAIN)
 
 OBJECTIVE:
-You are the planner and reasoning engine. You decide the best next step to achieve the user's goal.
-The frontend is the EXECUTOR.
+You are the planner and reasoning engine. You decide the best SINGLE next step.
+The frontend executes each action you return, then calls you again with updated page context.
 
-CRITICAL PROTOCOL:
-1. ONLY use DOM text for reasoning.
-2. DO NOT engage in conversation.
-3. Your FIRST response must be a physical action (click, type, open_new_tab).
-4. ONLY use "chat" when the goal is achieved or a direct question is asked.
-5. Return ONE action in valid JSON.
+CRITICAL RULES:
+1. Return EXACTLY ONE action per response.
+2. Do NOT set is_goal_achieved=true until ALL parts of the goal are complete.
+3. Do NOT engage in conversation — only return JSON.
+4. Use `CURRENT PAGE URL` to determine your location. If you are already on the target domain, do NOT call "open_new_tab" again.
+5. If the goal requires Gmail folders (e.g., spam, sent, trash, inbox), navigate directly by calling "open_new_tab" with the direct URL, which is extremely reliable:
+   - Spam: https://mail.google.com/mail/u/0/#spam
+   - Inbox: https://mail.google.com/mail/u/0/#inbox
+   - Sent: https://mail.google.com/mail/u/0/#sent
+   - Trash: https://mail.google.com/mail/u/0/#trash
+6. "open_new_tab" just opens the URL — it does NOT complete multi-step goals.
+7. Use the "VISIBLE LINKS & BUTTONS ON PAGE" list to match against elements you want to click or interact with. Prefer exact CSS selectors when available.
+8. ALWAYS check the "ACTIONS PREVIOUSLY COMPLETED IN THIS TASK" section to see what actions you have already executed. Do NOT repeat or navigate back to steps that are already completed. Progress forward to the next uncompleted part of the goal.
+9. Task Division: You must divide the main goal into 2 to 5 explicit sequential subtasks in Step 1, returning them as a list of subtasks in the `subtasks` array. In subsequent turns, you will receive the previous `subtasks` array, update the status of each subtask (choose between `pending`, `active`, or `completed`) based on your current step progress, and return the updated `subtasks` array. Make sure you only have ONE `active` subtask at a time.
+
+MULTI-STEP EXAMPLE (Goal: "open youtube and search for Believer"):
+  Step 1: {"action":"open_new_tab",  "value":"https://www.youtube.com", "is_goal_achieved":false, "subtasks":[{"title":"Open YouTube","status":"active"},{"title":"Search for Believer","status":"pending"}]}
+  (Next turn context shows CURRENT PAGE URL: https://www.youtube.com/)
+  Step 2: {"action":"click",  "selector":"input#search", "value":"search box", "is_goal_achieved":false, "subtasks":[{"title":"Open YouTube","status":"completed"},{"title":"Search for Believer","status":"active"}]}
+  Step 3: {"action":"type",   "selector":"input#search", "value":"Believer", "is_goal_achieved":false, "subtasks":[{"title":"Open YouTube","status":"completed"},{"title":"Search for Believer","status":"active"}]}
+  Step 4: {"action":"click",  "selector":"button#search-icon-legacy", "value":"search button", "is_goal_achieved":false, "subtasks":[{"title":"Open YouTube","status":"completed"},{"title":"Search for Believer","status":"active"}]}
+  Step 5: {"action":"chat",   "value":"Done! Searched YouTube for Believer.", "is_goal_achieved":true, "subtasks":[{"title":"Open YouTube","status":"completed"},{"title":"Search for Believer","status":"completed"}]}
 
 AVAILABLE ACTIONS:
-- open_new_tab: value="URL"
+- open_new_tab: value="FULL URL including https://"
 - close_tab: (no value)
 - switch_tab: (no value)
-- click: selector="CSS", value="Visible text fallback"
-- type: selector="CSS", value="Text to input"
+- click: selector="CSS selector", value="Visible text fallback"
+- type: selector="CSS selector", value="Text to input"
+- key: value="Enter" (press a key after typing)
 - scroll: value="up | down"
-- wait: (no value)
+- wait: (no value, use when page is loading)
 - stop: (no value)
-- chat: value="Response to user"
+- chat: value="Message to user"
 
-OUTPUT JSON:
+COMMON SELECTORS:
+- YouTube search input: input#search
+- YouTube search button: button#search-icon-legacy
+- Google search input: textarea[name='q']
+- Google search button: input[name='btnK']
+- Gmail compose: div[role='button'][gh='cm']
+
+OUTPUT FORMAT — reply with ONLY this JSON, no other text:
 {
- "action": "",
- "selector": "",
- "value": "",
- "caption": "User-friendly status",
- "reason": "Why this action?",
- "confidence": 0-1,
- "is_goal_achieved": false
+  "action": "<action_name>",
+  "selector": "<CSS selector or empty string>",
+  "value": "<URL, text to type, or message>",
+  "caption": "<User-friendly status message>",
+  "reason": "<Why this step?>",
+  "confidence": <0.0 to 1.0>,
+  "is_goal_achieved": <true only when ALL goal steps are done>,
+  "subtasks": [
+    {"title": "Subtask title description", "status": "pending | active | completed"}
+  ]
 }
 """
+
+EXECUTE_MODE_PROMPT = """
+⚡ EXECUTE MODE ACTIVATED:
+Your objective is decisive, rapid interaction.
+- Prioritize click, type, navigate, and key actions.
+- Do NOT spend time explaining or summarizing.
+- Complete form submissions, button interactions, and navigation flows as quickly as possible.
+"""
+
+READ_MODE_PROMPT = """
+📖 READ MODE ACTIVATED:
+Your objective is reading comprehension, text extraction, and summarization.
+- Prioritize scrolling, waiting, and analyzing the page content.
+- Do NOT click on random links or compose text unless strictly required to access the reading material.
+- Gather all text context. Once gathered, use the "chat" action to summarize or answer the user's question directly.
+"""
+
+SCAN_MODE_PROMPT = """
+🔍 SCAN MODE ACTIVATED:
+Your objective is scanning, indexing, and finding specific elements, links, prices, or keywords.
+- Prioritize scrolling and extracting lists of matched elements, products, prices, or links.
+- Do NOT click buy buttons, delete buttons, or modify application state.
+- Gather a clean list of findings and present them to the user via the "chat" action once completed.
+"""
+
+WRITE_MODE_PROMPT = """
+✏️ WRITE MODE ACTIVATED:
+Your objective is detailed text composition, email drafting, or form input writing.
+- Focus on finding compose fields, textareas, inputs, and contenteditable elements.
+- Compose detailed, professional, and contextually rich text.
+- Execute "type" actions with the composed text, and use "key" (Enter) to submit or save when ready.
+"""
+
+SEARCH_EXECUTE_PROMPT = """
+🌐 SEARCH & EXECUTE MODE ACTIVATED:
+Your objective is to find information via search engines first, then execute a follow-up task.
+- Step 1: Open a search engine (Google, Bing, or YouTube).
+- Step 2: Search for the user query using the search bar.
+- Step 3: Analyze the search result links from the DOM and click the most relevant match.
+- Step 4: Perform the final task, compose the answer, or execute follow-up steps on the target page.
+"""
+
 
 CODING_PROMPT = """
 You are a coding automation agent.
@@ -140,23 +222,103 @@ def detect_task_type(command):
 # LLM ROUTING LAYER
 # ──────────────────────────────────────────────
 def call_ollama(model_key: str, prompt: str) -> str:
-    """Call a local Ollama model and return raw text response."""
+    """
+    Call a local Ollama model using streaming mode.
+    Streaming avoids a single long wait — tokens arrive as they're generated.
+    Falls back gracefully on timeout.
+    """
     model_name = OLLAMA_MODELS.get(model_key, model_key)
-    log("LLM", f"Using Ollama → {model_name}")
+    log("LLM", f"Using Ollama → {model_name} (timeout={OLLAMA_TIMEOUT}s)")
+
+    # ── Trim prompt for slow/large models to reduce token count ──
+    # Keep system prompt + goal, but limit page context to 2000 chars
+    if len(prompt) > 5000:
+        # Find PAGE: marker and trim from there
+        if "\nPAGE:" in prompt:
+            parts = prompt.split("\nPAGE:", 1)
+            page_section = parts[1][:2000]
+            prompt = parts[0] + "\nPAGE:" + page_section
 
     payload = {
         "model":  model_name,
         "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0}
+        "stream": True,       # ← streaming: tokens arrive incrementally, no single huge wait
+        "options": {
+            "temperature": 0,
+            "num_predict": 300,   # cap output tokens — we only need a short JSON action
+        }
     }
-    resp = requests.post(
-        f"{OLLAMA_BASE_URL}/api/generate",
-        json=payload,
-        timeout=120
+
+    try:
+        resp = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json=payload,
+            stream=True,
+            timeout=OLLAMA_TIMEOUT
+        )
+        resp.raise_for_status()
+    except requests.exceptions.Timeout:
+        raise TimeoutError(
+            f"Ollama '{model_name}' timed out after {OLLAMA_TIMEOUT}s. "
+            f"Try: (1) use qwen2.5 (faster) or (2) set OLLAMA_TIMEOUT=300 in .env"
+        )
+    except requests.exceptions.ConnectionError:
+        raise ConnectionError(
+            f"Cannot reach Ollama at {OLLAMA_BASE_URL}. Run: ollama serve"
+        )
+
+    # Collect streamed tokens
+    full_text = []
+    try:
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            chunk = json.loads(raw_line.decode("utf-8"))
+            token = chunk.get("response", "")
+            full_text.append(token)
+            if chunk.get("done"):
+                break
+    except Exception:
+        pass  # stream closed early — still try to parse what we got
+
+    return "".join(full_text)
+
+
+def call_ollama_with_fallback(model_key: str, prompt: str) -> str:
+    """
+    Try the requested Ollama model, fall back to qwen2.5 (fast, 397 MB),
+    then to Vertex AI cloud as last resort.
+    """
+    # 1. Try the requested model
+    try:
+        return call_ollama(model_key, prompt)
+    except (TimeoutError, ConnectionError) as e:
+        log("WARN", f"Primary model '{model_key}' failed: {e}")
+    except Exception as e:
+        log("WARN", f"Primary Ollama error: {e}")
+
+    # 2. Fallback to qwen2.5 (small, fast)
+    if model_key != "qwen2.5":
+        try:
+            log("LLM", "↪ Falling back to qwen2.5 (fast model)…")
+            return call_ollama("qwen2.5", prompt)
+        except Exception as e:
+            log("WARN", f"qwen2.5 fallback failed: {e}")
+
+    # 3. Fallback to Vertex AI cloud
+    if vertex_client is not None:
+        try:
+            log("LLM", "↪ Falling back to Cloud Gemini (Vertex AI)…")
+            return call_vertex(prompt)
+        except Exception as e:
+            log("WARN", f"Vertex fallback failed: {e}")
+
+    raise RuntimeError(
+        "All LLM backends failed. Check: "
+        "(1) Is Ollama running? → run 'ollama serve'. "
+        "(2) Is the model pulled? → run 'ollama pull gemma2'. "
+        "(3) Try selecting qwen2.5 (faster) in the UI."
     )
-    resp.raise_for_status()
-    return resp.json().get("response", "")
 
 
 def call_vertex(prompt: str) -> str:
@@ -173,29 +335,113 @@ def call_vertex(prompt: str) -> str:
 
 
 def generate_response(model_key: str, prompt: str) -> str:
-    """Route the prompt to the correct LLM backend."""
-    if model_key in OLLAMA_MODELS:
-        return call_ollama(model_key, prompt)
-    elif model_key == "gemini-cloud":
-        return call_vertex(prompt)
-    else:
-        # Auto-fallback: try Ollama first, then Vertex
+    """Route the prompt to the correct LLM backend with automatic fallback."""
+    if model_key == "gemini-cloud":
+        # Cloud path — no Ollama needed
         try:
-            return call_ollama("gemma2", prompt)
-        except Exception:
             return call_vertex(prompt)
+        except Exception as e:
+            log("WARN", f"Vertex AI failed: {e}. Trying Ollama fallback.")
+            return call_ollama_with_fallback("qwen2.5", prompt)
+    else:
+        # Ollama path with fallback chain
+        return call_ollama_with_fallback(model_key, prompt)
+
+
 
 # ──────────────────────────────────────────────
 # PARSE LLM OUTPUT → JSON
 # ──────────────────────────────────────────────
-def parse_llm_json(text: str) -> dict:
+def repair_truncated_json(text: str) -> str:
+    """Attempt to repair simple truncated JSON by closing open quotes, brackets, and braces."""
     text = text.strip()
+    idx = text.find("{")
+    if idx != -1:
+        text = text[idx:]
+    else:
+        return text
+        
+    in_quote = False
+    escape = False
+    stack = []
+    repaired_chars = []
+    
+    for c in text:
+        if escape:
+            repaired_chars.append(c)
+            escape = False
+            continue
+        if c == '\\':
+            repaired_chars.append(c)
+            escape = True
+            continue
+        if c == '"':
+            in_quote = not in_quote
+            repaired_chars.append(c)
+            continue
+            
+        if not in_quote:
+            if c in '{[':
+                stack.append(c)
+            elif c in '}]':
+                if stack:
+                    stack.pop()
+        repaired_chars.append(c)
+        
+    if in_quote:
+        repaired_chars.append('"')
+        
+    while stack:
+        opened = stack.pop()
+        if opened == '{':
+            repaired_chars.append('}')
+        elif opened == '[':
+            repaired_chars.append(']')
+            
+    return "".join(repaired_chars)
+
+
+def parse_llm_json(text: str) -> dict:
+    """Parse JSON from LLM output, handling Ollama/Llama quirks like extra text."""
+    text = text.strip()
+
     # Strip markdown code fences
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
-    return json.loads(text)
+
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract first JSON object from text (handles Llama adding explanation text)
+    import re
+    match = re.search(r'\{[\s\S]*?\}', text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Try to repair and parse the largest JSON-like block
+    repaired = repair_truncated_json(text)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: find largest JSON block from original
+    match = re.search(r'\{[\s\S]*\}', text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"No valid JSON found in LLM output: {text[:300]}")
 
 # ──────────────────────────────────────────────
 # ROUTES
@@ -244,6 +490,7 @@ def list_models():
 @app.route("/agent", methods=["POST"])
 def agent():
     try:
+        import uuid, time as _time
         data          = request.json or {}
         command       = data.get("command", "")
         instruction   = data.get("instruction")
@@ -251,21 +498,93 @@ def agent():
         prev_context  = data.get("previous_context", "")
         last_action   = data.get("last_action", "")
         repeat_count  = data.get("repeat_count", 0)
-        model_key     = data.get("model", "gemma2")   # ← NEW: model chosen in UI
+        step_number   = data.get("step_number", 1)
+        model_key     = data.get("model", "gemma2")
+        page_url      = data.get("page_url", "")
+        page_links    = data.get("page_links", [])
+        action_history = data.get("action_history", [])
+        subtasks      = data.get("subtasks", [])
 
-        log("INFO", f"Command: {command} | Model: {model_key} | Mode: {instruction}")
+        # Update live status
+        LIVE_STATUS["running"]        = True
+        LIVE_STATUS["command"]        = command
+        LIVE_STATUS["step"]           = step_number
+        LIVE_STATUS["current_action"] = last_action or "starting"
+        LIVE_STATUS["model"]          = model_key
+        if not LIVE_STATUS.get("started_at") or last_action == "":
+            LIVE_STATUS["task_id"]    = str(uuid.uuid4())[:8]
+            LIVE_STATUS["started_at"] = datetime.now().isoformat()
+
+        log("INFO", f"[Step {step_number}] Command: {command} | Model: {model_key} | Mode: {instruction}")
 
         task_type    = instruction if instruction else detect_task_type(command)
         mode_guidance = f"MODE: {instruction.upper()}" if instruction else "MODE: GENERAL"
 
+        # Format links for the prompt context
+        links_str = ""
+        if page_links:
+            links_str = "VISIBLE LINKS & BUTTONS ON PAGE:\n"
+            for link in page_links:
+                text = link.get("text", "").strip()
+                sel = link.get("sel", "").strip()
+                if text:
+                    links_str += f"- Text: \"{text}\" | Selector: \"{sel}\"\n"
+
+        # Format action history for episodic memory
+        history_str = ""
+        if action_history:
+            history_str = "ACTIONS PREVIOUSLY COMPLETED IN THIS TASK:\n"
+            for item in action_history:
+                step = item.get("step", 1)
+                act = item.get("action", "")
+                val = item.get("value", "")
+                cap = item.get("caption", "")
+                history_str += f"- Step {step}: {act} (Value: \"{val}\", Caption: \"{cap}\")\n"
+
+        # Format subtasks roadmap status for task division
+        subtasks_str = ""
+        if subtasks:
+            subtasks_str = "CURRENT TASK DIVISION & ROADMAP STATUS:\n"
+            for item in subtasks:
+                title = item.get("title", "")
+                status = item.get("status", "pending")
+                subtasks_str += f"- Subtask: \"{title}\" (Status: {status})\n"
+
+        page_info = f"CURRENT PAGE URL: {page_url}\n" if page_url else ""
+        if subtasks_str:
+            page_info += f"\n{subtasks_str}\n"
+        if history_str:
+            page_info += f"\n{history_str}\n"
+        if links_str:
+            page_info += f"\n{links_str}\n"
+
+        # Select mode specific prompts
+        mode_prompt = ""
+        if task_type == "execute":
+            mode_prompt = EXECUTE_MODE_PROMPT
+        elif task_type == "read":
+            mode_prompt = READ_MODE_PROMPT
+        elif task_type == "scan":
+            mode_prompt = SCAN_MODE_PROMPT
+        elif task_type == "write":
+            mode_prompt = WRITE_MODE_PROMPT
+        elif task_type == "search_execute":
+            mode_prompt = SEARCH_EXECUTE_PROMPT
+
         if task_type == "coding":
             prompt = (
                 f"{CODING_PROMPT}\nTASK: {command}\n{mode_guidance}\n"
+                f"{page_info}"
                 f"PAGE: {context[:4000]}\nLAST ACTION: {last_action}"
             )
         else:
+            combined_system = SYSTEM_PROMPT
+            if mode_prompt:
+                combined_system = f"{SYSTEM_PROMPT}\n\n{mode_prompt}"
+                
             prompt = (
-                f"{SYSTEM_PROMPT}\nGOAL: {command}\n{mode_guidance}\n"
+                f"{combined_system}\nGOAL: {command}\n{mode_guidance}\n"
+                f"{page_info}"
                 f"PAGE: {context[:4000]}\nPREVIOUS: {prev_context[:2000]}\n"
                 f"LAST ACTION: {last_action}"
             )
@@ -283,10 +602,41 @@ def agent():
         if not result.get("selector") and result.get("value") and result.get("action") in ["click", "type"]:
             result["fallback_selector"] = f"*:contains('{result['value']}')"
 
-        # Navigation safety
+        # Navigation safety — normalise action name, never mark goal done here
+        # (the LLM must decide when ALL steps are complete via is_goal_achieved)
         if result.get("action") in ["open_new_tab", "navigate"]:
             result["action"] = "open_new_tab"
-            if any(k in command.lower() for k in ["open", "go to", "visit"]) and len(command.split()) < 4:
+            
+            # Guard: Prevent redundant open_new_tab calls to the same page URL
+            target_url = result.get("value", "").lower().strip()
+            if target_url and page_url:
+                from urllib.parse import urlparse
+                try:
+                    target_parsed = urlparse(target_url)
+                    current_parsed = urlparse(page_url.lower())
+                    target_domain = target_parsed.netloc
+                    current_domain = current_parsed.netloc
+                    
+                    if target_domain and current_domain and target_domain == current_domain:
+                        target_path_hash = target_parsed.path.rstrip('/') + ('#' + target_parsed.fragment if target_parsed.fragment else '')
+                        current_path_hash = current_parsed.path.rstrip('/') + ('#' + current_parsed.fragment if current_parsed.fragment else '')
+                        if target_path_hash == current_path_hash:
+                            log("WARN", f"Redundant open_new_tab to active page detected: {target_url} — converting to wait")
+                            result["action"] = "wait"
+                            result["caption"] = "Already on target page. Preparing next actions..."
+                except Exception as ex:
+                    log("WARN", f"Redundant url parsing failed: {ex}")
+
+            # Only mark done if the command is PURELY a navigation request
+            # (single step: e.g. "open youtube.com") with no compound task
+            compound_keywords = ["and", "then", "search", "find", "type", "click",
+                                  "write", "send", "submit", "fill", "login", "sign"]
+            is_simple_nav = (
+                any(k in command.lower() for k in ["open", "go to", "visit", "navigate"])
+                and len(command.split()) <= 4
+                and not any(ck in command.lower() for ck in compound_keywords)
+            )
+            if is_simple_nav:
                 result["is_goal_achieved"] = True
 
         # Coding state machine
@@ -305,23 +655,42 @@ def agent():
                 result["is_goal_achieved"] = True
                 result["caption"]         = "Coding task successfully completed!"
 
-        # Save to history
-        if history_col is not None and command:
-            try:
-                history_col.insert_one({
-                    "command":    command,
-                    "timestamp":  datetime.now(),
-                    "task_type":  task_type,
-                    "model":      model_key,
-                    "status":     "success"
-                })
-            except Exception:
-                pass
+        # Save to history (first step only to avoid duplicate entries per task)
+        if command and repeat_count == 0:
+            hist_entry = {
+                "id":        LIVE_STATUS.get("task_id", str(step_number)),
+                "command":   command,
+                "time":      datetime.now().strftime("%H:%M:%S"),
+                "task_type": task_type,
+                "model":     model_key,
+                "status":    "success"
+            }
+            IN_MEM_HISTORY.append(hist_entry)
+            if len(IN_MEM_HISTORY) > 100:
+                IN_MEM_HISTORY.pop(0)
+            if history_col is not None:
+                try:
+                    history_col.insert_one({
+                        "command":   command,
+                        "timestamp": datetime.now(),
+                        "task_type": task_type,
+                        "model":     model_key,
+                        "status":    "success"
+                    })
+                except Exception:
+                    pass
 
         # Low-confidence fallback
         if result.get("confidence", 1) < 0.2:
             result["action"]  = "wait"
             result["caption"] = "Thinking carefully... confidence is low."
+
+        # Safety: cap repeat loops in backend too
+        if repeat_count >= 5 and result.get("action") == last_action:
+            log("WARN", f"Repeated action '{last_action}' x{repeat_count} — forcing stop")
+            result["action"]           = "chat"
+            result["value"]            = f"I seem to be stuck repeating '{last_action}'. Please try rephrasing your task."
+            result["is_goal_achieved"] = True
 
         final_res = {
             "action":           result.get("action"),
@@ -332,6 +701,8 @@ def agent():
             "reason":           result.get("reason", ""),
             "confidence":       result.get("confidence", 0.5),
             "is_goal_achieved": result.get("is_goal_achieved", False),
+            "step_number":      step_number,
+            "subtasks":         result.get("subtasks", subtasks),
             "meta": {
                 "repeat_count": repeat_count,
                 "task":         task_type,
@@ -340,12 +711,20 @@ def agent():
             }
         }
 
+        # Update live status with the chosen action
+        LIVE_STATUS["current_action"] = final_res["action"]
+        if final_res["is_goal_achieved"] or final_res["action"] in ["stop", "chat"]:
+            LIVE_STATUS["running"] = False
+            LIVE_STATUS["current_action"] = "idle"
+
         log("ACTION", f"{final_res['action']} (Conf: {final_res['confidence']}) via {model_key}")
         return jsonify(final_res)
 
     except Exception as e:
         error_msg = str(e)
         log("CRITICAL", error_msg)
+        LIVE_STATUS["running"]        = False
+        LIVE_STATUS["current_action"] = "error"
         return jsonify({
             "action":           "chat",
             "value":            f"System Error: {error_msg}",
@@ -359,23 +738,61 @@ def get_logs():
     return jsonify(LOG_QUEUE)
 
 
+@app.route("/api/status", methods=["GET"])
+def get_status():
+    """Return live task execution state for frontends."""
+    return jsonify(LIVE_STATUS)
+
+
 @app.route("/history", methods=["GET"])
 def get_history():
-    if history_col is None:
-        return jsonify([])
-    try:
-        cursor = history_col.find().sort("timestamp", -1).limit(20)
-        logs   = [
-            {
-                "command": doc.get("command"),
-                "time":    doc.get("timestamp").strftime("%H:%M:%S"),
-                "model":   doc.get("model", "unknown")
-            }
-            for doc in cursor
-        ]
-        return jsonify(logs)
-    except Exception:
-        return jsonify([])
+    # Try MongoDB first
+    if history_col is not None:
+        try:
+            cursor = history_col.find().sort("timestamp", -1).limit(50)
+            logs   = [
+                {
+                    "id":      str(doc.get("_id", "")),
+                    "command": doc.get("command"),
+                    "time":    doc.get("timestamp").strftime("%H:%M:%S"),
+                    "model":   doc.get("model", "unknown")
+                }
+                for doc in cursor
+            ]
+            return jsonify(logs)
+        except Exception:
+            pass
+    # Fallback to in-memory history
+    return jsonify(list(reversed(IN_MEM_HISTORY[-50:])))
+
+
+@app.route("/api/history/clear", methods=["DELETE"])
+def clear_history():
+    """Delete all history entries."""
+    global IN_MEM_HISTORY
+    IN_MEM_HISTORY = []
+    if history_col is not None:
+        try:
+            history_col.delete_many({})
+        except Exception:
+            pass
+    log("INFO", "History cleared by user")
+    return jsonify({"ok": True, "message": "History cleared"})
+
+
+@app.route("/api/history/<item_id>", methods=["DELETE"])
+def delete_history_item(item_id):
+    """Delete a single history entry by ID."""
+    global IN_MEM_HISTORY
+    # In-memory: ids are string indices
+    IN_MEM_HISTORY = [h for h in IN_MEM_HISTORY if h.get("id") != item_id]
+    if history_col is not None:
+        try:
+            from bson import ObjectId
+            history_col.delete_one({"_id": ObjectId(item_id)})
+        except Exception:
+            pass
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

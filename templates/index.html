@@ -304,6 +304,9 @@
       <label class="sw"><input type="checkbox" id="voiceTog" checked><span class="slider"></span></label>
       <i class="fas fa-volume-up"></i> Voice Out
     </div>
+    <button onclick="toggleHistory()" style="background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);color:#c4b5fd;border-radius:9px;padding:7px 12px;cursor:pointer;font-size:.82rem;display:flex;align-items:center;gap:6px;transition:.2s" title="View history">
+      <i class="fas fa-clock-rotate-left"></i> History
+    </button>
   </div>
 
   <!-- STATUS -->
@@ -332,6 +335,10 @@
 let sel  = 'gemma2';
 let mods = [];
 let rec  = null;
+let isRunning = false;
+let lastLogCount = 0;
+let logPollFast  = false;
+let stepNum = 0;
 
 // ── MODEL META ─────────────────────────────────────────────
 const META = {
@@ -389,7 +396,6 @@ function chooseMod(id){
 }
 
 function updatePill(){
-  const m  = mods.find(x=>x.id===sel) || {};
   const mt = META[sel] || {};
   const pill = document.getElementById('activePill');
   const txt  = document.getElementById('pillTxt');
@@ -397,46 +403,123 @@ function updatePill(){
   txt.textContent = (META[sel]?.name || sel) + (mt.type==='local' ? ' · Offline' : ' · Cloud');
 }
 
-// ── SEND ───────────────────────────────────────────────────
+// ── SEND / AGENTIC LOOP ────────────────────────────────────
 async function sendTask(){
   const cmd = document.getElementById('userInput').value.trim();
-  if(!cmd) return;
-  setStatus('Processing…', true);
-  try{
-    const r = await fetch('/agent',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({command:cmd, model:sel, context:'Web UI', repeat_count:0})
-    });
-    const d = await r.json();
-    setStatus('Done · ' + d.action, false);
-    if(d.value) speak(d.value);
-  }catch(e){ setStatus('Connection Error.', false) }
+  if(!cmd || isRunning) return;
+
+  isRunning = true;
+  stepNum   = 0;
+  setStatus('Starting…', true);
+  logPollFast = true;
+
+  let lastAction = '', prevCtx = '', repeatCount = 0;
+  const MAX_STEPS = 15;
+
+  while(isRunning && stepNum < MAX_STEPS){
+    stepNum++;
+    setStatus(`Step ${stepNum} — Thinking…`, true);
+
+    try{
+      const r = await fetch('/agent',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          command:          cmd,
+          model:            sel,
+          context:          prevCtx || 'Web UI (no page context)',
+          previous_context: prevCtx,
+          last_action:      lastAction,
+          repeat_count:     repeatCount,
+          step_number:      stepNum
+        })
+      });
+      const d = await r.json();
+      const action = (d.action||'').toLowerCase();
+
+      setStatus(`Step ${stepNum} · ${action.toUpperCase()} — ${(d.caption||'').slice(0,40)}`, true);
+      if(d.value && action==='chat') speak(d.value);
+
+      // Show coding output
+      if(action === 'type' && d.value && d.value.length > 30){
+        document.getElementById('statusTxt').title = 'Generated code: ' + d.value.slice(0,200);
+      }
+
+      if(action === lastAction) repeatCount++;
+      else repeatCount = 0;
+
+      lastAction = action;
+      prevCtx    = `Last action: ${action} | Caption: ${d.caption||''}`;
+
+      if(d.is_goal_achieved || action==='stop' || action==='chat' || repeatCount>=5){
+        setStatus(d.caption || d.value || '✅ Goal achieved!', false);
+        if(d.value && action==='chat') speak(d.value);
+        break;
+      }
+
+      await new Promise(r=>setTimeout(r, 1500));
+    }catch(e){
+      setStatus('Connection Error: ' + e.message, false);
+      break;
+    }
+  }
+
+  if(stepNum >= MAX_STEPS) setStatus('⚠️ Max steps reached', false);
+  isRunning   = false;
+  logPollFast = false;
 }
 
 function setStatus(msg, busy){
-  document.getElementById('statusTxt').childNodes[document.getElementById('statusTxt').childNodes.length-1].textContent = ' '+msg;
-  document.getElementById('spinIcon').style.display = busy ? 'inline-block' : 'none';
-  document.getElementById('sendBtn').disabled = busy;
-  document.getElementById('stopBtn').style.display = busy ? 'inline-block' : 'none';
+  const st = document.getElementById('statusTxt');
+  st.childNodes[st.childNodes.length-1].textContent = ' '+msg;
+  document.getElementById('spinIcon').style.display  = busy ? 'inline-block' : 'none';
+  document.getElementById('sendBtn').disabled        = busy;
+  document.getElementById('stopBtn').style.display   = busy ? 'inline-block' : 'none';
 }
 
-function stopTask(){ setStatus('Stopped.', false) }
+function stopTask(){
+  isRunning = false;
+  logPollFast = false;
+  setStatus('Stopped.', false);
+}
 
-// ── MIC ────────────────────────────────────────────────────
+// ── VOICE INPUT ────────────────────────────────────────────
 function toggleMic(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ alert('Voice not supported.'); return }
+  if(!SR){ alert('Voice not supported in this browser.'); return; }
   const btn = document.getElementById('micBtn');
-  if(rec){ rec.stop(); rec=null; btn.classList.remove('rec'); return }
+  if(rec){
+    rec.stop(); rec=null;
+    btn.classList.remove('rec');
+    btn.innerHTML = '<i class="fas fa-microphone"></i>';
+    return;
+  }
   rec = new SR();
   rec.lang = document.getElementById('langSel').value;
+  rec.continuous = false;
+  rec.interimResults = true;
   btn.classList.add('rec');
+  btn.innerHTML = '<i class="fas fa-circle"></i>';
+  setStatus('🎙️ Listening…', false);
+
   rec.onresult = e => {
-    document.getElementById('userInput').value = e.results[0][0].transcript;
-    rec=null; btn.classList.remove('rec'); sendTask();
+    const last = e.results[e.results.length-1];
+    document.getElementById('userInput').value = last[0].transcript;
+    if(last.isFinal){
+      rec=null; btn.classList.remove('rec');
+      btn.innerHTML = '<i class="fas fa-microphone"></i>';
+      sendTask();
+    }
   };
-  rec.onerror = () => { rec=null; btn.classList.remove('rec') };
+  rec.onerror = e => {
+    rec=null; btn.classList.remove('rec');
+    btn.innerHTML = '<i class="fas fa-microphone"></i>';
+    setStatus('Mic error: ' + e.error, false);
+  };
+  rec.onend = () => {
+    rec=null; btn.classList.remove('rec');
+    btn.innerHTML = '<i class="fas fa-microphone"></i>';
+  };
   rec.start();
 }
 
@@ -444,7 +527,8 @@ function toggleMic(){
 function speak(t){
   if(!document.getElementById('voiceTog').checked) return;
   window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(new SpeechSynthesisUtterance(t));
+  const u = new SpeechSynthesisUtterance(t);
+  window.speechSynthesis.speak(u);
 }
 
 // ── LOG COLOR ──────────────────────────────────────────────
@@ -456,12 +540,12 @@ function logCls(msg){
   return 'lm-info';
 }
 
-// ── POLL LOGS ──────────────────────────────────────────────
+// ── POLL LOGS (fast when running) ──────────────────────────
 async function fetchLogs(){
   try{
-    const r = await fetch('/api/logs');
+    const r    = await fetch('/api/logs');
     const logs = await r.json();
-    if(!logs.length) return;
+    if(logs.length === lastLogCount) return;
     const ll = document.getElementById('logLines');
     ll.innerHTML = logs.map(l=>`
       <div class="le">
@@ -470,14 +554,103 @@ async function fetchLogs(){
       </div>`).join('');
     const c = document.getElementById('console');
     c.scrollTop = c.scrollHeight;
+    lastLogCount = logs.length;
   }catch(e){}
 }
 
 const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+// ── HISTORY PANEL (new) ────────────────────────────────────
+let histVisible = false;
+
+async function toggleHistory(){
+  histVisible = !histVisible;
+  let panel = document.getElementById('histPanel');
+  if(!histVisible){ if(panel) panel.remove(); return; }
+
+  // Create panel
+  panel = document.createElement('div');
+  panel.id = 'histPanel';
+  panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:320px;z-index:99;background:rgba(5,10,24,.97);backdrop-filter:blur(20px);padding:16px;overflow-y:auto;border-left:1px solid rgba(255,255,255,.09)';
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:.9rem;font-weight:700;color:#8b5cf6"><i class="fas fa-clock-rotate-left"></i> History</span>
+      <button onclick="toggleHistory()" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);border-radius:7px;color:#94a3b8;padding:5px 10px;cursor:pointer;font-size:.75rem"><i class="fas fa-xmark"></i> Close</button>
+    </div>
+    <button id="clearAllHistBtn" onclick="clearAllHistory()" style="width:100%;padding:8px;margin-bottom:10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);color:#f87171;border-radius:8px;cursor:pointer;font-size:.78rem">
+      <i class="fas fa-trash"></i> Clear All
+    </button>
+    <div id="histItems">Loading…</div>
+  `;
+  document.body.appendChild(panel);
+  loadHistoryItems();
+}
+
+async function clearAllHistory(){
+  try{
+    await fetch('/api/history/clear', {method:'DELETE'});
+    document.getElementById('histItems').innerHTML = '<div style="color:#94a3b8;font-size:.78rem;text-align:center;padding:16px">History cleared ✓</div>';
+  }catch(e){
+    document.getElementById('histItems').innerHTML = '<div style="color:#ef4444;font-size:.78rem">Server unreachable</div>';
+  }
+}
+
+async function loadHistoryItems(){
+  const cont = document.getElementById('histItems');
+  try{
+    const r = await fetch('/history');
+    const data = await r.json();
+    if(!data.length){ cont.innerHTML = '<div style="color:#94a3b8;font-size:.78rem;text-align:center;padding:16px">No history yet</div>'; return; }
+    cont.innerHTML = '';
+    data.forEach(item=>{
+      const d = document.createElement('div');
+      d.style.cssText = 'padding:9px 11px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.09);border-radius:8px;margin-bottom:6px;font-size:.78rem;cursor:pointer;transition:.18s;display:flex;justify-content:space-between;align-items:flex-start;gap:8px';
+      d.onmouseenter = ()=>d.style.background='rgba(255,255,255,.07)';
+      d.onmouseleave = ()=>d.style.background='rgba(255,255,255,.03)';
+      const isCloud = item.model==='gemini-cloud';
+      d.innerHTML = `
+        <div style="flex:1;word-break:break-word;line-height:1.4;color:#f1f5f9">${esc(item.command||'')}</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+          <span style="font-size:.6rem;color:#475569">${item.time||''}</span>
+          <span style="font-size:.56rem;padding:1px 6px;border-radius:4px;background:${isCloud?'rgba(96,165,250,.12)':'rgba(52,211,153,.12)'};color:${isCloud?'#60a5fa':'#34d399'};border:1px solid ${isCloud?'rgba(96,165,250,.38)':'rgba(52,211,153,.38)'}">${item.model||'unknown'}</span>
+          <button data-id="${esc(item.id||'')}" onclick="deleteHistItem(this)" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);color:#f87171;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:.6rem"><i class="fas fa-trash-can"></i></button>
+        </div>
+      `;
+      d.querySelector('div').addEventListener('click', ()=>{
+        document.getElementById('userInput').value = item.command;
+        toggleHistory();
+      });
+      cont.appendChild(d);
+    });
+  }catch(e){
+    cont.innerHTML = '<div style="color:#ef4444;font-size:.78rem">Could not load — is server running?</div>';
+  }
+}
+
+async function deleteHistItem(btn){
+  btn.stopPropagation && btn.stopPropagation();
+  const itemId = btn.dataset.id;
+  if(itemId) await fetch(`/api/history/${itemId}`,{method:'DELETE'}).catch(()=>{});
+  const row = btn.closest('div[style]');
+  if(row) row.remove();
+}
+
 // ── INIT ───────────────────────────────────────────────────
 loadModels();
-setInterval(fetchLogs,  2000);
+
+// Fast polling: 1s while running, 2s otherwise
+setInterval(()=>{ fetchLogs(); }, logPollFast ? 1000 : 2000);
+
+// Separate fast poll when running
+let fastPoll = null;
+const origSend = sendTask;
+window.sendTask = async function(){
+  fastPoll = setInterval(fetchLogs, 1000);
+  await origSend();
+  clearInterval(fastPoll);
+  fetchLogs();
+};
+
 setInterval(loadModels, 30000);
 </script>
 </body>
