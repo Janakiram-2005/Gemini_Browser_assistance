@@ -58,6 +58,12 @@ User Instruction ──► AI Brain (LLM) ──► JSON Action ──► Chrome
 | ☁️ **Cloud LLM Fallback** | Switch to Google Gemini 2.5 Flash (Vertex AI) with one click |
 | 🔀 **Live Model Toggle** | Swap AI brains in real-time from the web UI or Chrome extension |
 | 🌐 **Autonomous Browsing** | Agent opens tabs, clicks, types, scrolls, reads page content, submits forms |
+| 🗂️ **Dynamic Subtask Roadmap** | Automatically divides complex goals into sequential subtasks, showing them live in the browser widget as Completed, Active (with animated spin), or Pending |
+| 🧠 **Sliding Episodic Memory** | Retains a sliding buffer of the past 5 completed actions in static memory to completely eliminate recursive navigation loops |
+| 🕳️ **Shadow DOM Traversal** | Recursively traverses `.shadowRoot` boundaries of custom components, capturing hidden questions, buttons, and radio selectors |
+| 🔄 **Multi-Frame Iframe Support** | Captures via `allFrames: true` and merges contexts from all nested iframes (e.g., Vantage container widgets) |
+| ⚡ **Form Submit Fallback** | Employs visibility filters to bypass hidden inputs and standard form submission (`requestSubmit()`) to ensure Enter key navigations always fire |
+| 🚀 **Tailored Execution Modes** | Unique, specialized planning contexts in `app.py` for Execute, Read, Scan, Write, Search & Execute, and Coding tasks |
 | 💻 **Coding Mode** | Detects LeetCode / coding tasks, generates & pastes code, auto-submits |
 | 🎙️ **Voice Input** | Speak commands in English, Telugu, Hindi, or Tamil |
 | 🔊 **Voice Output** | AI reads results aloud using Web Speech API |
