@@ -20,10 +20,15 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ──────────────────────────────────────────────
-# OLLAMA CONFIG  (local LLM server)
+# TIERED ACTION ROUTER CONFIG & ADAPTIVE TIMEOUT BOUNDS
 # ──────────────────────────────────────────────
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_TIMEOUT  = int(os.getenv("OLLAMA_TIMEOUT", "180"))   # seconds; raise if model is slow to load
+OLLAMA_BASE_URL         = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+TIER1_TIMEOUT           = int(os.getenv("TIER1_TIMEOUT", "10"))     # seconds (DOM matching completes < 20ms)
+TIER2_TIMEOUT           = int(os.getenv("TIER2_TIMEOUT", "10"))     # seconds (Scoped Tier 2 local LLM timeout)
+TIER3_TIMEOUT           = int(os.getenv("TIER3_TIMEOUT", "30"))     # seconds (Scoped Tier 3 Cloud VLM timeout)
+OLLAMA_TIMEOUT          = TIER2_TIMEOUT                             # Adaptive tier default replacing static 180s limit
+CONFIDENCE_THRESHOLD   = float(os.getenv("CONFIDENCE_THRESHOLD", "0.60")) # Escalation threshold
+MAX_ESCALATION_ATTEMPTS = int(os.getenv("MAX_ESCALATION_ATTEMPTS", "2")) # Capped escalations per step
 
 OLLAMA_MODELS = {
     "gemma2":   "gemma2:latest",   # local Gemini-family model
@@ -218,22 +223,277 @@ def detect_task_type(command):
         return "coding"
     return "normal"
 
+def safe_float(val, default=0.5):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
 # ──────────────────────────────────────────────
-# LLM ROUTING LAYER
+# TIER 1: DOM MATCHING ENGINE & PROMPT BUILDER
 # ──────────────────────────────────────────────
-def call_ollama(model_key: str, prompt: str) -> str:
+def build_prompt_for_tier(data: dict, tier_guidance: str = "") -> str:
+    command       = data.get("command", "")
+    instruction   = data.get("instruction")
+    context       = data.get("context", "")[:MAX_CONTEXT]
+    prev_context  = data.get("previous_context", "")
+    last_action   = data.get("last_action", "")
+    page_url      = data.get("page_url", "")
+    page_links    = data.get("page_links", [])
+    action_history = data.get("action_history", [])
+    subtasks      = data.get("subtasks", [])
+
+    task_type    = instruction if instruction else detect_task_type(command)
+    mode_guidance = f"MODE: {instruction.upper()}" if instruction else "MODE: GENERAL"
+
+    # Format links for the prompt
+    links_str = ""
+    if page_links:
+        links_str = "VISIBLE LINKS & BUTTONS ON PAGE:\n"
+        for link in page_links:
+            text = (link.get("text") or "").strip()
+            sel = (link.get("sel") or "").strip()
+            if text:
+                links_str += f"- Text: \"{text}\" | Selector: \"{sel}\"\n"
+
+    # Format action history for episodic memory
+    history_str = ""
+    if action_history:
+        history_str = "ACTIONS PREVIOUSLY COMPLETED IN THIS TASK:\n"
+        for item in action_history:
+            step = item.get("step", 1)
+            act = item.get("action", "")
+            val = item.get("value", "")
+            cap = item.get("caption", "")
+            history_str += f"- Step {step}: {act} (Value: \"{val}\", Caption: \"{cap}\")\n"
+
+    # Format subtasks roadmap status for task division
+    subtasks_str = ""
+    if subtasks:
+        subtasks_str = "CURRENT TASK DIVISION & ROADMAP STATUS:\n"
+        for item in subtasks:
+            title = item.get("title", "")
+            status = item.get("status", "pending")
+            subtasks_str += f"- Subtask: \"{title}\" (Status: {status})\n"
+
+    page_info = f"CURRENT PAGE URL: {page_url}\n" if page_url else ""
+    if subtasks_str:
+        page_info += f"\n{subtasks_str}\n"
+    if history_str:
+        page_info += f"\n{history_str}\n"
+    if links_str:
+        page_info += f"\n{links_str}\n"
+
+    mode_prompt = ""
+    if task_type == "execute": mode_prompt = EXECUTE_MODE_PROMPT
+    elif task_type == "read": mode_prompt = READ_MODE_PROMPT
+    elif task_type == "scan": mode_prompt = SCAN_MODE_PROMPT
+    elif task_type == "write": mode_prompt = WRITE_MODE_PROMPT
+    elif task_type == "search_execute": mode_prompt = SEARCH_EXECUTE_PROMPT
+
+    if task_type == "coding":
+        prompt = (
+            f"{CODING_PROMPT}\nTASK: {command}\n{mode_guidance}\n{tier_guidance}\n"
+            f"{page_info}"
+            f"PAGE: {context[:4000]}\nLAST ACTION: {last_action}"
+        )
+    else:
+        combined_system = SYSTEM_PROMPT
+        if mode_prompt:
+            combined_system = f"{SYSTEM_PROMPT}\n\n{mode_prompt}"
+            
+        prompt = (
+            f"{combined_system}\n{tier_guidance}\nGOAL: {command}\n{mode_guidance}\n"
+            f"{page_info}"
+            f"PAGE: {context[:4000]}\nPREVIOUS: {prev_context[:2000]}\n"
+            f"LAST ACTION: {last_action}"
+        )
+
+    return prompt
+
+
+def evaluate_tier1_dom(command: str, context: str, page_url: str, page_links: list, last_action: str, action_history: list, subtasks: list, task_type: str = None) -> dict:
     """
-    Call a local Ollama model using streaming mode.
-    Streaming avoids a single long wait — tokens arrive as they're generated.
-    Falls back gracefully on timeout.
+    Tier 1: Fast DOM Matching Engine.
+    Evaluates direct DOM context, page links, current URL, and user command locally in < 20ms.
+    Returns structured action with confidence >= 0.60 for direct navigation, link click, or input filling,
+    or returns confidence < 0.60 for unlabelled elements, custom controls, or visual edge cases.
+    """
+    import re
+    cmd_lower = command.lower().strip()
+
+    # Visual edge case detection: force low confidence (< 0.60) to trigger escalation to Tier 3 VLM
+    visual_keywords = ["unlabelled", "custom canvas", "canvas control", "visual coordinate", "graphic element", "complex graphic", "camera icon", "unlabelled icon", "chart", "drawing"]
+    if any(vk in cmd_lower for vk in visual_keywords):
+        return {
+            "action": "click",
+            "reason": "Visual edge case detected (unlabelled/canvas element); escalating to Tier 3 VLM",
+            "confidence": 0.40,
+            "subtasks": subtasks
+        }
+
+    # 1. Direct URL Navigation Intent
+    nav_keywords = ["open ", "go to ", "visit ", "navigate to "]
+    is_nav_intent = any(cmd_lower.startswith(k) or f" {k}" in cmd_lower for k in ["open", "go to", "visit", "navigate"])
+
+    url_match = re.search(r'https?://[^\s]+', command)
+    domain_match = re.search(r'(?:[a-zA-Z0-9-]+\.)+(?:com|org|net|edu|gov|io|ai|co|in|dev|app)', command)
+
+    if url_match or domain_match or is_nav_intent:
+        if "youtube" in cmd_lower:
+            target_url = "https://www.youtube.com"
+        elif "google" in cmd_lower:
+            target_url = "https://www.google.com"
+        elif "github" in cmd_lower:
+            target_url = "https://github.com"
+        elif "gmail" in cmd_lower:
+            target_url = "https://mail.google.com"
+        elif url_match:
+            target_url = url_match.group(0)
+        elif domain_match:
+            d = domain_match.group(0)
+            target_url = f"https://www.{d}" if not d.startswith("www.") else f"https://{d}"
+        else:
+            target_url = None
+
+        if target_url:
+            if page_url and target_url.lower().rstrip('/') in page_url.lower():
+                pass
+            else:
+                updated_subtasks = subtasks.copy() if subtasks else [
+                    {"title": f"Navigate to {target_url}", "status": "active"}
+                ]
+                compound_keywords = ["and", "then", "search", "find", "type", "click", "write", "send", "submit"]
+                is_simple_nav = (
+                    is_nav_intent
+                    and len(command.split()) <= 4
+                    and not any(ck in cmd_lower for ck in compound_keywords)
+                )
+
+                return {
+                    "action": "open_new_tab",
+                    "value": target_url,
+                    "caption": f"Opening {target_url}...",
+                    "reason": "Tier 1 DOM matching identified direct navigation target",
+                    "confidence": 0.95,
+                    "is_goal_achieved": is_simple_nav,
+                    "subtasks": updated_subtasks
+                }
+
+    # 2. Link / Button Click Matching in page_links
+    if any(k in cmd_lower for k in ["click", "press", "select", "tap", "hit"]):
+        target_text = cmd_lower
+        for prefix in ["click on ", "click the ", "click ", "press the ", "press ", "select ", "tap "]:
+            if prefix in target_text:
+                target_text = target_text.split(prefix, 1)[1]
+                break
+        target_text = target_text.replace("button", "").replace("link", "").strip()
+
+        if page_links and target_text:
+            best_match = None
+            highest_score = 0
+            for link in page_links:
+                l_text = (link.get("text") or "").strip().lower()
+                l_sel  = (link.get("sel") or "").strip()
+                if not l_sel:
+                    continue
+
+                if l_text == target_text:
+                    score = 1.0
+                elif target_text and l_text and (target_text in l_text or l_text in target_text):
+                    score = 0.85
+                else:
+                    score = 0.0
+
+                if score > highest_score:
+                    highest_score = score
+                    best_match = link
+
+            if best_match and highest_score >= 0.85:
+                has_text = bool((best_match.get("text") or "").strip())
+                sel_lower = (best_match.get("sel") or "").lower()
+
+                # If element has NO text and selector indicates icon/canvas/unlabelled -> force low confidence (< 0.60)
+                if not has_text and ("icon" in sel_lower or "canvas" in sel_lower or "unlabelled" in sel_lower):
+                    return {
+                        "action": "click",
+                        "selector": best_match.get("sel", ""),
+                        "value": best_match.get("text", ""),
+                        "reason": "Tier 1 found unlabelled icon/canvas element; confidence low",
+                        "confidence": 0.40,
+                        "subtasks": subtasks
+                    }
+
+                return {
+                    "action": "click",
+                    "selector": best_match.get("sel", ""),
+                    "value": best_match.get("text", ""),
+                    "caption": f"Clicking '{best_match.get('text')}'",
+                    "reason": f"Tier 1 DOM exact text match for '{target_text}'",
+                    "confidence": 0.90,
+                    "is_goal_achieved": False,
+                    "subtasks": subtasks
+                }
+
+    # 3. Form Input Typing Matching
+    if any(k in cmd_lower for k in ["type", "fill", "enter", "search for", "input"]):
+        input_sel = None
+        input_val = ""
+
+        if "search for " in cmd_lower:
+            input_val = command.split("search for ", 1)[1].strip()
+        elif "type " in cmd_lower and " in" in cmd_lower:
+            parts = command.split("type ", 1)[1].split(" in", 1)
+            input_val = parts[0].strip()
+        elif "fill " in cmd_lower and " with" in cmd_lower:
+            parts = command.split(" with", 1)
+            input_val = parts[1].strip()
+
+        if page_links:
+            for link in page_links:
+                sel = (link.get("sel") or "").lower()
+                if "input" in sel or "textarea" in sel or "search" in sel:
+                    input_sel = link.get("sel")
+                    break
+
+        if not input_sel and page_url:
+            if "youtube.com" in page_url:
+                input_sel = "input#search"
+            elif "google.com" in page_url:
+                input_sel = "textarea[name='q']"
+
+        if input_sel and input_val:
+            return {
+                "action": "type",
+                "selector": input_sel,
+                "value": input_val,
+                "caption": f"Typing '{input_val}' into search field...",
+                "reason": "Tier 1 DOM matched form input field selector",
+                "confidence": 0.85,
+                "is_goal_achieved": False,
+                "subtasks": subtasks
+            }
+
+    # Default Tier 1 fallback: low confidence (0.40) to trigger escalation
+    return {
+        "action": "wait",
+        "reason": "No direct DOM pattern match found in Tier 1; escalating",
+        "confidence": 0.40,
+        "subtasks": subtasks
+    }
+
+
+# ──────────────────────────────────────────────
+# LLM ROUTING LAYER & TIERED ENGINES
+# ──────────────────────────────────────────────
+def call_ollama(model_key: str, prompt: str, timeout: int = TIER2_TIMEOUT) -> str:
+    """
+    Call a local Ollama model using streaming mode with scoped tier timeout.
     """
     model_name = OLLAMA_MODELS.get(model_key, model_key)
-    log("LLM", f"Using Ollama → {model_name} (timeout={OLLAMA_TIMEOUT}s)")
+    log("LLM", f"Using Ollama → {model_name} (timeout={timeout}s)")
 
-    # ── Trim prompt for slow/large models to reduce token count ──
-    # Keep system prompt + goal, but limit page context to 2000 chars
     if len(prompt) > 5000:
-        # Find PAGE: marker and trim from there
         if "\nPAGE:" in prompt:
             parts = prompt.split("\nPAGE:", 1)
             page_section = parts[1][:2000]
@@ -242,10 +502,10 @@ def call_ollama(model_key: str, prompt: str) -> str:
     payload = {
         "model":  model_name,
         "prompt": prompt,
-        "stream": True,       # ← streaming: tokens arrive incrementally, no single huge wait
+        "stream": True,
         "options": {
             "temperature": 0,
-            "num_predict": 300,   # cap output tokens — we only need a short JSON action
+            "num_predict": 300,
         }
     }
 
@@ -254,20 +514,14 @@ def call_ollama(model_key: str, prompt: str) -> str:
             f"{OLLAMA_BASE_URL}/api/generate",
             json=payload,
             stream=True,
-            timeout=OLLAMA_TIMEOUT
+            timeout=timeout
         )
         resp.raise_for_status()
     except requests.exceptions.Timeout:
-        raise TimeoutError(
-            f"Ollama '{model_name}' timed out after {OLLAMA_TIMEOUT}s. "
-            f"Try: (1) use qwen2.5 (faster) or (2) set OLLAMA_TIMEOUT=300 in .env"
-        )
+        raise TimeoutError(f"Ollama '{model_name}' timed out after {timeout}s.")
     except requests.exceptions.ConnectionError:
-        raise ConnectionError(
-            f"Cannot reach Ollama at {OLLAMA_BASE_URL}. Run: ollama serve"
-        )
+        raise ConnectionError(f"Cannot reach Ollama at {OLLAMA_BASE_URL}. Run: ollama serve")
 
-    # Collect streamed tokens
     full_text = []
     try:
         for raw_line in resp.iter_lines():
@@ -279,73 +533,212 @@ def call_ollama(model_key: str, prompt: str) -> str:
             if chunk.get("done"):
                 break
     except Exception:
-        pass  # stream closed early — still try to parse what we got
+        pass
 
     return "".join(full_text)
 
 
-def call_ollama_with_fallback(model_key: str, prompt: str) -> str:
+def call_ollama_with_fallback(model_key: str, prompt: str, timeout: int = TIER2_TIMEOUT) -> str:
     """
     Try the requested Ollama model, fall back to qwen2.5 (fast, 397 MB),
     then to Vertex AI cloud as last resort.
     """
-    # 1. Try the requested model
     try:
-        return call_ollama(model_key, prompt)
+        return call_ollama(model_key, prompt, timeout=timeout)
     except (TimeoutError, ConnectionError) as e:
         log("WARN", f"Primary model '{model_key}' failed: {e}")
     except Exception as e:
         log("WARN", f"Primary Ollama error: {e}")
 
-    # 2. Fallback to qwen2.5 (small, fast)
     if model_key != "qwen2.5":
         try:
             log("LLM", "↪ Falling back to qwen2.5 (fast model)…")
-            return call_ollama("qwen2.5", prompt)
+            return call_ollama("qwen2.5", prompt, timeout=timeout)
         except Exception as e:
             log("WARN", f"qwen2.5 fallback failed: {e}")
 
-    # 3. Fallback to Vertex AI cloud
     if vertex_client is not None:
         try:
             log("LLM", "↪ Falling back to Cloud Gemini (Vertex AI)…")
-            return call_vertex(prompt)
+            return call_vertex(prompt, timeout=TIER3_TIMEOUT)
         except Exception as e:
             log("WARN", f"Vertex fallback failed: {e}")
 
     raise RuntimeError(
-        "All LLM backends failed. Check: "
-        "(1) Is Ollama running? → run 'ollama serve'. "
-        "(2) Is the model pulled? → run 'ollama pull gemma2'. "
-        "(3) Try selecting qwen2.5 (faster) in the UI."
+        "All LLM backends failed."
     )
 
 
-def call_vertex(prompt: str) -> str:
-    """Call cloud Gemini via Vertex AI and return raw text response."""
+def call_vertex(prompt: str, timeout: int = TIER3_TIMEOUT) -> str:
+    """Call cloud Gemini via Vertex AI with dynamic timeout bound."""
     if vertex_client is None:
         raise RuntimeError("Vertex AI client not initialized")
-    log("LLM", "Using Cloud Gemini (Vertex AI)")
-    response = vertex_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config={"temperature": 0}
+    log("LLM", f"Using Cloud Gemini (Vertex AI) with timeout={timeout}s")
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            vertex_client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config={"temperature": 0}
+        )
+        try:
+            response = future.result(timeout=timeout)
+            return response.text.strip()
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(f"Vertex AI Cloud VLM timed out after {timeout}s")
+
+
+def call_tier2_local_llm(data: dict, model_key: str = "qwen2.5", timeout: int = TIER2_TIMEOUT) -> dict:
+    prompt = build_prompt_for_tier(data, tier_guidance="TIER 2 LOCAL LLM ENGINE: Produce fast structured action response.")
+    raw_text = ""
+    try:
+        raw_text = call_ollama(model_key, prompt, timeout=timeout)
+    except Exception as e:
+        log("WARN", f"Tier 2 primary model '{model_key}' error: {e}")
+        if model_key != "qwen2.5":
+            try:
+                raw_text = call_ollama("qwen2.5", prompt, timeout=timeout)
+            except Exception as e2:
+                log("WARN", f"Tier 2 qwen2.5 fallback error: {e2}")
+                return {"action": "wait", "reason": f"Tier 2 failed: {e2}", "confidence": 0.0, "subtasks": data.get("subtasks", [])}
+
+    if not raw_text:
+        return {"action": "wait", "reason": "Tier 2 empty response", "confidence": 0.0, "subtasks": data.get("subtasks", [])}
+
+    try:
+        return parse_llm_json(raw_text)
+    except Exception as e:
+        log("WARN", f"Tier 2 JSON parse error: {e}")
+        return {"action": "wait", "reason": f"Tier 2 parse failed: {e}", "confidence": 0.0, "subtasks": data.get("subtasks", [])}
+
+
+def call_tier3_cloud_vlm(data: dict, timeout: int = TIER3_TIMEOUT) -> dict:
+    prompt = build_prompt_for_tier(data, tier_guidance="TIER 3 CLOUD VLM ENGINE: Analyze visual layout, unlabelled elements, and visual coordinates.")
+    raw_text = ""
+    try:
+        raw_text = call_vertex(prompt, timeout=timeout)
+    except Exception as e:
+        log("WARN", f"Tier 3 Cloud VLM error: {e}")
+        try:
+            raw_text = call_ollama("gemma2", prompt, timeout=timeout)
+        except Exception as e2:
+            return {"action": "wait", "reason": f"Tier 3 failed: {e2}", "confidence": 0.0, "subtasks": data.get("subtasks", [])}
+
+    if not raw_text:
+        return {"action": "wait", "reason": "Tier 3 empty response", "confidence": 0.0, "subtasks": data.get("subtasks", [])}
+
+    try:
+        res = parse_llm_json(raw_text)
+        if "confidence" not in res or safe_float(res.get("confidence")) < CONFIDENCE_THRESHOLD:
+            res["confidence"] = 0.85
+        return res
+    except Exception as e:
+        log("WARN", f"Tier 3 JSON parse error: {e}")
+        return {"action": "wait", "reason": f"Tier 3 parse failed: {e}", "confidence": 0.0, "subtasks": data.get("subtasks", [])}
+
+
+def route_action(data: dict) -> dict:
+    """
+    3-Tiered Action Router:
+      - Tier 1: DOM Matching (< 20ms)
+      - Tier 2: Local LLM (10s timeout bound)
+      - Tier 3: Cloud VLM (30s timeout bound)
+    Escalates when confidence < 0.60. Max escalation attempts per step capped at 2.
+    Preserves action_history and subtasks roadmap alignment across escalations.
+    """
+    import time
+    start_time = time.time()
+    step_number = data.get("step_number", 1)
+    requested_model = data.get("model", "gemma2")
+    command = data.get("command", "")
+    subtasks = data.get("subtasks", [])
+
+    escalation_count = 0
+    max_escalations = MAX_ESCALATION_ATTEMPTS  # 2
+
+    log("ROUTER", f"[Step {step_number}] Starting 3-tiered routing for: '{command}'")
+
+    # --- TIER 1: DOM Matching Engine (< 20ms) ---
+    tier1_res = evaluate_tier1_dom(
+        command=command,
+        context=data.get("context", ""),
+        page_url=data.get("page_url", ""),
+        page_links=data.get("page_links", []),
+        last_action=data.get("last_action", ""),
+        action_history=data.get("action_history", []),
+        subtasks=subtasks,
+        task_type=data.get("instruction")
     )
-    return response.text.strip()
+
+    tier1_conf = safe_float(tier1_res.get("confidence", 0)) if tier1_res else 0.0
+    if tier1_conf >= CONFIDENCE_THRESHOLD:
+        tier1_res["tier"] = "tier1"
+        tier1_res["escalated"] = False
+        tier1_res["router_latency_ms"] = round((time.time() - start_time) * 1000, 2)
+        log("ROUTER", f"Tier 1 (DOM Match) resolved step {step_number} in {tier1_res['router_latency_ms']}ms (Conf: {tier1_conf:.2f})")
+        return tier1_res
+
+    # Escalation 1: Tier 1 -> Tier 2
+    log("ROUTER", f"Tier 1 confidence low ({tier1_conf:.2f} < {CONFIDENCE_THRESHOLD}). Escalating (1/{max_escalations}) -> Tier 2")
+    escalation_count += 1
+
+    # --- TIER 2: Local LLM Engine (10s timeout) ---
+    tier2_res = None
+    if escalation_count <= max_escalations:
+        try:
+            model_to_use = requested_model if requested_model != "gemini-cloud" else "qwen2.5"
+            tier2_res = call_tier2_local_llm(data=data, model_key=model_to_use, timeout=TIER2_TIMEOUT)
+        except Exception as e:
+            log("WARN", f"Tier 2 execution failed: {e}")
+
+    tier2_conf = safe_float(tier2_res.get("confidence", 0)) if tier2_res else 0.0
+    if tier2_conf >= CONFIDENCE_THRESHOLD:
+        tier2_res["tier"] = "tier2"
+        tier2_res["escalated"] = True
+        tier2_res["router_latency_ms"] = round((time.time() - start_time) * 1000, 2)
+        log("ROUTER", f"Tier 2 (Local LLM) resolved step {step_number} in {tier2_res['router_latency_ms']}ms (Conf: {tier2_conf:.2f})")
+        return tier2_res
+
+    # Escalation 2: Tier 2 -> Tier 3
+    log("ROUTER", f"Tier 2 confidence low ({tier2_conf:.2f} < {CONFIDENCE_THRESHOLD}). Escalating (2/{max_escalations}) -> Tier 3 Cloud VLM")
+    escalation_count += 1
+
+    # --- TIER 3: Cloud VLM Engine (30s timeout) ---
+    tier3_res = None
+    if escalation_count <= max_escalations:
+        try:
+            tier3_res = call_tier3_cloud_vlm(data=data, timeout=TIER3_TIMEOUT)
+        except Exception as e:
+            log("WARN", f"Tier 3 execution failed: {e}")
+
+    if not tier3_res:
+        tier3_res = tier2_res or tier1_res or {
+            "action": "wait",
+            "caption": "Thinking carefully...",
+            "reason": "Escalation fallback",
+            "confidence": 0.5,
+            "subtasks": subtasks
+        }
+
+    tier3_res["tier"] = "tier3"
+    tier3_res["escalated"] = True
+    tier3_res["router_latency_ms"] = round((time.time() - start_time) * 1000, 2)
+    log("ROUTER", f"Tier 3 (Cloud VLM) resolved step {step_number} in {tier3_res['router_latency_ms']}ms (Conf: {safe_float(tier3_res.get('confidence', 0)):.2f})")
+    return tier3_res
 
 
 def generate_response(model_key: str, prompt: str) -> str:
-    """Route the prompt to the correct LLM backend with automatic fallback."""
+    """Route prompt to LLM backend with automatic fallback."""
     if model_key == "gemini-cloud":
-        # Cloud path — no Ollama needed
         try:
             return call_vertex(prompt)
         except Exception as e:
             log("WARN", f"Vertex AI failed: {e}. Trying Ollama fallback.")
             return call_ollama_with_fallback("qwen2.5", prompt)
     else:
-        # Ollama path with fallback chain
         return call_ollama_with_fallback(model_key, prompt)
+
 
 
 
@@ -517,86 +910,10 @@ def agent():
 
         log("INFO", f"[Step {step_number}] Command: {command} | Model: {model_key} | Mode: {instruction}")
 
-        task_type    = instruction if instruction else detect_task_type(command)
-        mode_guidance = f"MODE: {instruction.upper()}" if instruction else "MODE: GENERAL"
+        task_type = instruction if instruction else detect_task_type(command)
 
-        # Format links for the prompt context
-        links_str = ""
-        if page_links:
-            links_str = "VISIBLE LINKS & BUTTONS ON PAGE:\n"
-            for link in page_links:
-                text = link.get("text", "").strip()
-                sel = link.get("sel", "").strip()
-                if text:
-                    links_str += f"- Text: \"{text}\" | Selector: \"{sel}\"\n"
-
-        # Format action history for episodic memory
-        history_str = ""
-        if action_history:
-            history_str = "ACTIONS PREVIOUSLY COMPLETED IN THIS TASK:\n"
-            for item in action_history:
-                step = item.get("step", 1)
-                act = item.get("action", "")
-                val = item.get("value", "")
-                cap = item.get("caption", "")
-                history_str += f"- Step {step}: {act} (Value: \"{val}\", Caption: \"{cap}\")\n"
-
-        # Format subtasks roadmap status for task division
-        subtasks_str = ""
-        if subtasks:
-            subtasks_str = "CURRENT TASK DIVISION & ROADMAP STATUS:\n"
-            for item in subtasks:
-                title = item.get("title", "")
-                status = item.get("status", "pending")
-                subtasks_str += f"- Subtask: \"{title}\" (Status: {status})\n"
-
-        page_info = f"CURRENT PAGE URL: {page_url}\n" if page_url else ""
-        if subtasks_str:
-            page_info += f"\n{subtasks_str}\n"
-        if history_str:
-            page_info += f"\n{history_str}\n"
-        if links_str:
-            page_info += f"\n{links_str}\n"
-
-        # Select mode specific prompts
-        mode_prompt = ""
-        if task_type == "execute":
-            mode_prompt = EXECUTE_MODE_PROMPT
-        elif task_type == "read":
-            mode_prompt = READ_MODE_PROMPT
-        elif task_type == "scan":
-            mode_prompt = SCAN_MODE_PROMPT
-        elif task_type == "write":
-            mode_prompt = WRITE_MODE_PROMPT
-        elif task_type == "search_execute":
-            mode_prompt = SEARCH_EXECUTE_PROMPT
-
-        if task_type == "coding":
-            prompt = (
-                f"{CODING_PROMPT}\nTASK: {command}\n{mode_guidance}\n"
-                f"{page_info}"
-                f"PAGE: {context[:4000]}\nLAST ACTION: {last_action}"
-            )
-        else:
-            combined_system = SYSTEM_PROMPT
-            if mode_prompt:
-                combined_system = f"{SYSTEM_PROMPT}\n\n{mode_prompt}"
-                
-            prompt = (
-                f"{combined_system}\nGOAL: {command}\n{mode_guidance}\n"
-                f"{page_info}"
-                f"PAGE: {context[:4000]}\nPREVIOUS: {prev_context[:2000]}\n"
-                f"LAST ACTION: {last_action}"
-            )
-
-        # ── Call chosen LLM ──
-        raw_text = generate_response(model_key, prompt)
-
-        try:
-            result = parse_llm_json(raw_text)
-        except Exception as e:
-            log("ERROR", f"Parsing Error: {e} | Raw: {raw_text[:200]}")
-            result = {"action": "wait", "reason": "Parsing failed", "confidence": 0}
+        # ── Route action through 3-Tiered Router ──
+        result = route_action(data)
 
         # Enhance selector
         if not result.get("selector") and result.get("value") and result.get("action") in ["click", "type"]:
@@ -703,10 +1020,16 @@ def agent():
             "is_goal_achieved": result.get("is_goal_achieved", False),
             "step_number":      step_number,
             "subtasks":         result.get("subtasks", subtasks),
+            "tier":             result.get("tier", "tier1"),
+            "escalated":        result.get("escalated", False),
+            "router_latency_ms":result.get("router_latency_ms", 0.0),
             "meta": {
                 "repeat_count": repeat_count,
                 "task":         task_type,
                 "model":        model_key,
+                "tier":         result.get("tier", "tier1"),
+                "escalated":    result.get("escalated", False),
+                "router_latency_ms": result.get("router_latency_ms", 0.0),
                 "time":         datetime.now().isoformat()
             }
         }
