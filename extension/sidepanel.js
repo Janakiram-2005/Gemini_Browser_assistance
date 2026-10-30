@@ -45,6 +45,145 @@ let currentSubtasks = [];  // subtasks division roadmap
 let logPollTimer  = null;
 let lastLogCount  = 0;
 
+// Differential Frame Cache & Visual Fallback State
+let clientFrameCache = {};
+let lastFrameHash = "";
+let lastConfidence = 1.0;
+let isCanvasTargeted = false;
+
+// ═══════════════════════════════════════════════════════════
+//  DIFFERENTIAL FRAME CACHING & PROCESSOR ENGINE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Computes perceptual difference hash (dHash) on viewport image data URL.
+ * Resizes image to 9x8 grayscale canvas (72 pixels) and performs 64-bit comparison.
+ * Must run in under 30ms.
+ */
+async function computeDHash(dataUrl) {
+  const startTime = performance.now();
+  return new Promise((resolve) => {
+    if (!dataUrl) {
+      return resolve({ hash: "0000000000000000", durationMs: 0 });
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 9;
+      canvas.height = 8;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, 9, 8);
+      const imgData = ctx.getImageData(0, 0, 9, 8).data;
+
+      // Calculate grayscale values for 9x8 grid
+      const gray = [];
+      for (let i = 0; i < imgData.length; i += 4) {
+        const g = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+        gray.push(g);
+      }
+
+      // Compute 64 difference bits across 8 rows
+      let binaryHash = "";
+      for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+          const left = gray[row * 9 + col];
+          const right = gray[row * 9 + col + 1];
+          binaryHash += left > right ? "1" : "0";
+        }
+      }
+
+      // Convert 64 binary bits to 16 hex chars
+      let hexHash = "";
+      for (let i = 0; i < 64; i += 4) {
+        const nibble = binaryHash.substring(i, i + 4);
+        hexHash += parseInt(nibble, 2).toString(16);
+      }
+
+      const durationMs = Math.round((performance.now() - startTime) * 100) / 100;
+      resolve({ hash: hexHash, binary: binaryHash, durationMs });
+    };
+    img.onerror = () => {
+      resolve({ hash: "0000000000000000", durationMs: 0 });
+    };
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Calculates Hamming distance between two 16-character hex dHashes.
+ */
+function getHammingDistance(hash1, hash2) {
+  if (!hash1 || !hash2 || hash1.length !== hash2.length) return 64;
+  let dist = 0;
+  for (let i = 0; i < hash1.length; i++) {
+    if (hash1[i] !== hash2[i]) {
+      const val1 = parseInt(hash1[i], 16);
+      const val2 = parseInt(hash2[i], 16);
+      let xor = val1 ^ val2;
+      while (xor > 0) {
+        dist += xor & 1;
+        xor >>= 1;
+      }
+    }
+  }
+  return dist;
+}
+
+/**
+ * Downsamples display frame to max 1280x720 and applies 80% JPEG compression.
+ * Ensures total payload size stays strictly under 300 KB.
+ */
+async function processAndCompressFrame(dataUrl, maxW = 1280, maxH = 720, initialQuality = 0.8) {
+  return new Promise((resolve) => {
+    if (!dataUrl) {
+      return resolve({ dataUrl: "", width: 0, height: 0, sizeKb: 0, quality: 0 });
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      let w = img.width;
+      let h = img.height;
+
+      // Downsample to max 1280x720 preserving aspect ratio
+      if (w > maxW || h > maxH) {
+        const scale = Math.min(maxW / w, maxH / h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+
+      let quality = initialQuality;
+      let compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
+      let sizeKb = Math.round((compressedDataUrl.length * 3 / 4) / 1024);
+
+      // Guardrail: Ensure payload size stays strictly under 300 KB
+      while (sizeKb > 300 && quality > 0.2) {
+        quality -= 0.1;
+        compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
+        sizeKb = Math.round((compressedDataUrl.length * 3 / 4) / 1024);
+      }
+
+      resolve({
+        dataUrl: compressedDataUrl,
+        width: w,
+        height: h,
+        sizeKb: sizeKb,
+        quality: Math.round(quality * 100) / 100
+      });
+    };
+    img.onerror = () => {
+      resolve({ dataUrl: "", width: 0, height: 0, sizeKb: 0, quality: 0 });
+    };
+    img.src = dataUrl;
+  });
+}
+
 // ── MODEL META ─────────────────────────────────────────────
 const MODEL_META = {
   "gemma2":       { icon: "🦙", name: "Gemma 2",    sub: "Google · 5.4 GB · Offline",  type: "local" },
@@ -228,6 +367,13 @@ async function runAgent(command) {
   stepNumber  = 0;
   stepHistory = [];
   currentSubtasks = [];
+
+  // Reset Differential Frame Cache & Visual Fallback State
+  clientFrameCache = {};
+  lastFrameHash = "";
+  lastConfidence = 1.0;
+  isCanvasTargeted = false;
+
   renderSubtasks();
   stepTrail.innerHTML = "";
 
@@ -247,6 +393,7 @@ async function runAgent(command) {
       let context  = "";
       let pageUrl  = tab.url || "";
       let pageLinks = [];
+      let hasCanvasOnPage = false;
       try {
         const res = await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: true },
@@ -280,6 +427,7 @@ async function runAgent(command) {
             }
 
             const text  = getDeepInnerText(document.body).slice(0, 3000);
+            const canvasEls = getDeepElements("canvas");
             const selStr = "a[href], [role='link'], [data-tooltip], button, input, textarea, label, [role='checkbox'], [role='radio']";
             const links = getDeepElements(selStr)
               .slice(0, 40)
@@ -295,7 +443,7 @@ async function runAgent(command) {
                 };
               })
               .filter(l => l.text || l.tooltip);
-            return { text, links, url: window.location.href };
+            return { text, links, url: window.location.href, hasCanvas: canvasEls.length > 0 };
           }
         });
         let mergedText = "";
@@ -304,6 +452,7 @@ async function runAgent(command) {
           const r = frame.result || {};
           if (r.text) mergedText += "\n--- Frame: " + (r.url || "subframe") + " ---\n" + r.text + "\n";
           if (r.links) mergedLinks = mergedLinks.concat(r.links);
+          if (r.hasCanvas) hasCanvasOnPage = true;
         });
 
         context   = mergedText.slice(0, 6000);
@@ -325,9 +474,52 @@ async function runAgent(command) {
         step_number:      stepNumber,
         action_history:   stepHistory,
         subtasks:         currentSubtasks,
+        last_confidence:  lastConfidence,
+        is_canvas_interaction: isCanvasTargeted
       };
       const instr = modeSelect.value;
       if (instr) payload.instruction = instr;
+
+      // Evaluate Visual Fallback & Differential Frame Cache
+      const triggerVisualFallback = (lastConfidence < 0.70 && stepNumber > 1) || isCanvasTargeted;
+      if (triggerVisualFallback) {
+        addConsoleLine("VISUAL", `[Step ${stepNumber}] Visual Fallback Triggered (Confidence: ${lastConfidence.toFixed(2)}, Canvas: ${isCanvasTargeted})`);
+        let rawDataUrl = "";
+        try {
+          rawDataUrl = await new Promise(r => chrome.tabs.captureVisibleTab(null, { format: "png" }, r));
+        } catch (e) {
+          console.warn("captureVisibleTab warning:", e);
+        }
+
+        if (rawDataUrl) {
+          const { hash, durationMs } = await computeDHash(rawDataUrl);
+          const diff = getHammingDistance(hash, lastFrameHash);
+          addConsoleLine("DHASH", `dHash: ${hash} (${durationMs}ms) | Hamming Diff: ${diff} bits`);
+
+          if (lastFrameHash && diff <= 3) {
+            addConsoleLine("CACHE", `Static Screen State (Diff ${diff} <= 3 bits) - dHash Frame Cache HIT [${hash}]`);
+            payload.frame_hash = hash;
+            payload.dhash_diff = diff;
+            payload.frame_cached = true;
+            payload.use_visual_fallback = true;
+          } else {
+            const processed = await processAndCompressFrame(rawDataUrl, 1280, 720, 0.8);
+            addConsoleLine("VISUAL", `Downsampled Frame: ${processed.width}x${processed.height} | Size: ${processed.sizeKb} KB (Quality ${processed.quality})`);
+            payload.frame_hash = hash;
+            payload.frame_data = processed.dataUrl;
+            payload.frame_size_kb = processed.sizeKb;
+            payload.dhash_diff = diff;
+            payload.use_visual_fallback = true;
+            payload.frame_cached = false;
+
+            clientFrameCache[hash] = processed;
+            lastFrameHash = hash;
+          }
+        }
+      } else {
+        addConsoleLine("DOM", `[Step ${stepNumber}] DOM-First Execution (Visual VLM calls bypassed)`);
+        payload.use_visual_fallback = false;
+      }
 
       updateStatus("🧠", `Thinking… (Step ${stepNumber})`, stepNumber);
       addConsoleLine("INFO", `[Step ${stepNumber}] Calling brain | last_action="${lastAct}"`);
@@ -355,6 +547,13 @@ async function runAgent(command) {
         renderSubtasks();
       }
       const action = (data?.action || "").trim().toLowerCase();
+
+      // Update confidence & canvas targeting from returned action
+      if (data && data.confidence !== undefined) {
+        lastConfidence = parseFloat(data.confidence);
+      }
+      const targetStr = ((data?.selector || "") + " " + (data?.fallback_selector || "") + " " + (data?.value || "")).toLowerCase();
+      isCanvasTargeted = targetStr.includes("canvas");
 
       // D. VALIDATE
       const VALID = ["open_new_tab","click","type","key","scroll","close_tab","switch_tab","wait","stop","navigate","chat","coding"];
@@ -595,8 +794,9 @@ async function runScript(type, data) {
 function msgClass(msg) {
   if (msg.includes("[CRITICAL]")) return "cmsg-crit";
   if (msg.includes("[ERROR]"))    return "cmsg-err";
-  if (msg.includes("[ACTION]"))   return "cmsg-act";
-  if (msg.includes("[LLM]"))      return "cmsg-llm";
+  if (msg.includes("[ACTION]") || msg.includes("[ACT]"))   return "cmsg-act";
+  if (msg.includes("[LLM]") || msg.includes("[DHASH]") || msg.includes("[CACHE]") || msg.includes("[VISUAL]")) return "cmsg-llm";
+  if (msg.includes("[DOM]"))      return "cmsg-info";
   return "cmsg-info";
 }
 

@@ -23,7 +23,12 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # OLLAMA CONFIG  (local LLM server)
 # ──────────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_TIMEOUT  = int(os.getenv("OLLAMA_TIMEOUT", "180"))   # seconds; raise if model is slow to load
+OLLAMA_TIMEOUT  = int(os.getenv("OLLAMA_TIMEOUT", "30"))   # 30-second default active step timeout threshold
+
+# ──────────────────────────────────────────────
+# FRAME CACHE (dHash Layout Cache)
+# ──────────────────────────────────────────────
+FRAME_CACHE = {}  # dHash -> cached visual layout data / response
 
 OLLAMA_MODELS = {
     "gemma2":   "gemma2:latest",   # local Gemini-family model
@@ -505,6 +510,16 @@ def agent():
         action_history = data.get("action_history", [])
         subtasks      = data.get("subtasks", [])
 
+        # Visual Fallback & Differential Frame Cache parameters
+        frame_hash           = data.get("frame_hash", "")
+        frame_data           = data.get("frame_data", "")
+        use_visual_fallback  = data.get("use_visual_fallback", False)
+        dhash_diff           = data.get("dhash_diff", 0)
+        frame_size_kb        = data.get("frame_size_kb", 0)
+        last_confidence      = data.get("last_confidence", 1.0)
+        is_canvas_interaction= data.get("is_canvas_interaction", False)
+        frame_cached         = data.get("frame_cached", False)
+
         # Update live status
         LIVE_STATUS["running"]        = True
         LIVE_STATUS["command"]        = command
@@ -516,6 +531,39 @@ def agent():
             LIVE_STATUS["started_at"] = datetime.now().isoformat()
 
         log("INFO", f"[Step {step_number}] Command: {command} | Model: {model_key} | Mode: {instruction}")
+
+        # Check visual fallback trigger conditions
+        visual_info = ""
+        is_visual_triggered = use_visual_fallback or is_canvas_interaction or (last_confidence < 0.70 and step_number > 1)
+        if is_visual_triggered:
+            trigger_reasons = []
+            if last_confidence < 0.70 and step_number > 1:
+                trigger_reasons.append(f"DOM confidence low ({last_confidence:.2f} < 0.70)")
+            if is_canvas_interaction:
+                trigger_reasons.append("Canvas element interaction")
+            if use_visual_fallback and not trigger_reasons:
+                trigger_reasons.append("Visual fallback requested")
+
+            trigger_str = ", ".join(trigger_reasons)
+            log("VISUAL", f"[Step {step_number}] Visual Fallback Triggered ({trigger_str}) | dHash: {frame_hash or 'N/A'}")
+
+            if frame_cached or (frame_hash and frame_hash in FRAME_CACHE):
+                log("CACHE", f"[Step {step_number}] dHash Frame Cache HIT [{frame_hash}] - Reusing cached visual layout data")
+                visual_info = f"\n[VISUAL FRAME CACHE HIT] dHash: {frame_hash} (Static Screen State - Visual VLM Calls Bypassed)\n"
+            elif frame_data or frame_hash:
+                if frame_size_kb > 300:
+                    log("WARN", f"[Step {step_number}] Visual frame payload {frame_size_kb:.1f} KB exceeds 300 KB constraint")
+                else:
+                    log("VISUAL", f"[Step {step_number}] Visual frame payload received: {frame_size_kb:.1f} KB (<300 KB limit)")
+                visual_info = f"\n[VISUAL FALLBACK FRAME ATTACHED] dHash: {frame_hash} | Payload Size: {frame_size_kb:.1f} KB\n"
+                if frame_hash:
+                    FRAME_CACHE[frame_hash] = {
+                        "timestamp": datetime.now().isoformat(),
+                        "url": page_url,
+                        "size_kb": frame_size_kb
+                    }
+        else:
+            log("DOM", f"[Step {step_number}] DOM-First Execution (Visual VLM calls bypassed)")
 
         task_type    = instruction if instruction else detect_task_type(command)
         mode_guidance = f"MODE: {instruction.upper()}" if instruction else "MODE: GENERAL"
@@ -551,6 +599,8 @@ def agent():
                 subtasks_str += f"- Subtask: \"{title}\" (Status: {status})\n"
 
         page_info = f"CURRENT PAGE URL: {page_url}\n" if page_url else ""
+        if visual_info:
+            page_info += f"{visual_info}\n"
         if subtasks_str:
             page_info += f"\n{subtasks_str}\n"
         if history_str:
@@ -707,6 +757,10 @@ def agent():
                 "repeat_count": repeat_count,
                 "task":         task_type,
                 "model":        model_key,
+                "dhash":        frame_hash,
+                "use_visual_fallback": is_visual_triggered,
+                "frame_cached": frame_cached or (frame_hash in FRAME_CACHE),
+                "frame_size_kb": frame_size_kb,
                 "time":         datetime.now().isoformat()
             }
         }
@@ -729,7 +783,14 @@ def agent():
             "action":           "chat",
             "value":            f"System Error: {error_msg}",
             "caption":          "Brain Error: Backing off...",
-            "is_goal_achieved": True
+            "is_goal_achieved": True,
+            "meta": {
+                "dhash":        frame_hash,
+                "use_visual_fallback": is_visual_triggered,
+                "frame_cached": frame_cached or (frame_hash in FRAME_CACHE),
+                "frame_size_kb": frame_size_kb,
+                "time":         datetime.now().isoformat()
+            }
         })
 
 
