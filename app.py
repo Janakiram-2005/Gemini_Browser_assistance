@@ -12,6 +12,10 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from visual_pipeline import VisualStreamPipeline, downsample_frame, compute_ssim_mse, map_bounding_box
+
+# Instantiating Visual Stream Pipeline (capped at 45s timeout, 200KB max payload)
+global_pipeline = VisualStreamPipeline()
 
 # --- 1. CONFIG & SECRETS ---
 load_dotenv()
@@ -23,7 +27,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # OLLAMA CONFIG  (local LLM server)
 # ──────────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_TIMEOUT  = int(os.getenv("OLLAMA_TIMEOUT", "180"))   # seconds; raise if model is slow to load
+OLLAMA_TIMEOUT  = min(int(os.getenv("OLLAMA_TIMEOUT", "45")), 45)   # Cap step timeouts at 45s max
 
 OLLAMA_MODELS = {
     "gemma2":   "gemma2:latest",   # local Gemini-family model
@@ -329,7 +333,10 @@ def call_vertex(prompt: str) -> str:
     response = vertex_client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
-        config={"temperature": 0}
+        config={
+            "temperature": 0,
+            "max_output_tokens": 300,  # Enforce max output token limit
+        }
     )
     return response.text.strip()
 
@@ -589,14 +596,43 @@ def agent():
                 f"LAST ACTION: {last_action}"
             )
 
-        # ── Call chosen LLM ──
-        raw_text = generate_response(model_key, prompt)
+        screenshot    = data.get("screenshot") or data.get("image")
+        force_vlm     = data.get("force_vlm", False)
+        spatial_coords = data.get("spatial_coords", [])
 
-        try:
-            result = parse_llm_json(raw_text)
-        except Exception as e:
-            log("ERROR", f"Parsing Error: {e} | Raw: {raw_text[:200]}")
-            result = {"action": "wait", "reason": "Parsing failed", "confidence": 0}
+        # ── Visual Pipeline Frame Processing (if screenshot/image provided) ──
+        if screenshot:
+            density = len(page_links) if page_links else "medium"
+            
+            def vlm_callback(downsampled_b64):
+                nonlocal prompt
+                augmented_prompt = f"{prompt}\n[VISUAL_FRAME_BASE64_ATTACHED]"
+                raw = generate_response(model_key, augmented_prompt)
+                return parse_llm_json(raw)
+
+            pipeline_res = global_pipeline.process_frame(
+                image_input=screenshot,
+                element_density=density,
+                vlm_callback=vlm_callback,
+                extracted_coords=spatial_coords,
+                force_vlm=force_vlm
+            )
+
+            if pipeline_res.get("vlm_bypassed"):
+                log("INFO", f"[Visual Pipeline] Static screen detected (Diff {pipeline_res['diff_metrics']['variance']*100:.2f}%) — Bypassing VLM call")
+                result = pipeline_res["action_result"]
+            else:
+                log("INFO", f"[Visual Pipeline] Frame processed ({pipeline_res['payload_size_kb']:.1f} KB, Diff {pipeline_res['diff_metrics']['variance']*100:.2f}%)")
+                result = pipeline_res["action_result"]
+        else:
+            # ── Standard Prompt-Only LLM Route ──
+            raw_text = generate_response(model_key, prompt)
+
+            try:
+                result = parse_llm_json(raw_text)
+            except Exception as e:
+                log("ERROR", f"Parsing Error: {e} | Raw: {raw_text[:200]}")
+                result = {"action": "wait", "reason": "Parsing failed", "confidence": 0}
 
         # Enhance selector
         if not result.get("selector") and result.get("value") and result.get("action") in ["click", "type"]:
@@ -793,6 +829,43 @@ def delete_history_item(item_id):
         except Exception:
             pass
     return jsonify({"ok": True})
+
+
+@app.route("/api/visual_process", methods=["POST"])
+def visual_process():
+    """
+    Adaptive Visual Stream Pipeline Endpoint.
+    Processes screenshot frames through dynamic downsampling, SSIM/MSE change detection,
+    VLM invocation or caching bypass, and spatial bounding box coordinate mapping.
+    """
+    try:
+        data = request.json or {}
+        image_input = data.get("image") or data.get("screenshot") or data.get("frame")
+        if not image_input:
+            return jsonify({"error": "No image frame provided"}), 400
+
+        element_density = data.get("element_density", "medium")
+        command = data.get("command", "Analyze visual frame")
+        model_key = data.get("model", "gemma2")
+        force_vlm = data.get("force_vlm", False)
+        spatial_coords = data.get("spatial_coords", [])
+
+        def vlm_callback(downsampled_b64):
+            prompt = f"Analyze downsampled image frame for goal: {command}"
+            raw = generate_response(model_key, prompt)
+            return parse_llm_json(raw)
+
+        pipeline_res = global_pipeline.process_frame(
+            image_input=image_input,
+            element_density=element_density,
+            vlm_callback=vlm_callback,
+            extracted_coords=spatial_coords,
+            force_vlm=force_vlm
+        )
+        return jsonify(pipeline_res)
+    except Exception as e:
+        log("ERROR", f"Visual Pipeline API Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
